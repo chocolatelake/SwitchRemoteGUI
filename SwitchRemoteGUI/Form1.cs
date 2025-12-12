@@ -32,17 +32,33 @@ namespace SwitchRemoteGUI
         Button btnMinus, btnHome, btnCap, btnPlus;
         Button btnL3, btnR3;
 
+        // 枠線の太さ
+        private int borderSize = 5;
+
         public Form1()
         {
             InitializeComponent();
             this.TopMost = true;
             this.FormBorderStyle = FormBorderStyle.None;
             this.MinimumSize = new Size(300, 400);
-            this.BackColor = Color.FromArgb(30, 30, 30);
-            this.Opacity = 0.90;
-            this.Padding = new Padding(10);
+
+            // ★透明化と半透明の設定
+            // 1. マゼンタ色を「透明」とみなす設定
+            this.TransparencyKey = Color.Magenta;
+            this.BackColor = Color.Magenta;
+
+            // 2. ウィンドウ全体の不透明度を下げる (0.7 = 70%見えて30%透ける)
+            // これでボタンも枠も「半透明」になります
+            this.Opacity = 0.70;
+
+            // 枠線を描くための余白
+            this.Padding = new Padding(borderSize);
+
             this.KeyPreview = true;
             this.KeyDown += Form1_KeyDown;
+
+            // 描画イベント(枠線を描くため)
+            this.Paint += Form1_Paint;
 
             ConnectPort();
             CreateUI();
@@ -51,6 +67,22 @@ namespace SwitchRemoteGUI
             UpdateLayout();
         }
 
+        // ★枠線を描画する処理
+        private void Form1_Paint(object sender, PaintEventArgs e)
+        {
+            // 背景はMagenta(透明)なので、縁(ふち)の部分だけ黒く塗る
+            // これで「枠」が見えるようになり、リサイズ操作も可能になる
+            Color frameColor = Color.Black;
+
+            using (Pen p = new Pen(frameColor, borderSize))
+            {
+                // 枠の内側に描画
+                p.Alignment = System.Drawing.Drawing2D.PenAlignment.Inset;
+                e.Graphics.DrawRectangle(p, this.ClientRectangle);
+            }
+        }
+
+        // ウィンドウの端っこ判定（リサイズ用）
         protected override void WndProc(ref Message m)
         {
             const int WM_NCHITTEST = 0x84;
@@ -59,14 +91,16 @@ namespace SwitchRemoteGUI
             {
                 Point pos = this.PointToClient(new Point(m.LParam.ToInt32()));
                 int grip = 16;
-                if (pos.X <= grip && pos.Y <= grip) m.Result = (IntPtr)13;
-                else if (pos.X >= this.ClientSize.Width - grip && pos.Y <= grip) m.Result = (IntPtr)14;
-                else if (pos.X <= grip && pos.Y >= this.ClientSize.Height - grip) m.Result = (IntPtr)16;
-                else if (pos.X >= this.ClientSize.Width - grip && pos.Y >= this.ClientSize.Height - grip) m.Result = (IntPtr)17;
-                else if (pos.X <= grip) m.Result = (IntPtr)10;
-                else if (pos.X >= this.ClientSize.Width - grip) m.Result = (IntPtr)11;
-                else if (pos.Y <= grip) m.Result = (IntPtr)12;
-                else if (pos.Y >= this.ClientSize.Height - grip) m.Result = (IntPtr)15;
+
+                // 四隅と端の判定
+                if (pos.X <= grip && pos.Y <= grip) m.Result = (IntPtr)13; // TOPLEFT
+                else if (pos.X >= this.ClientSize.Width - grip && pos.Y <= grip) m.Result = (IntPtr)14; // TOPRIGHT
+                else if (pos.X <= grip && pos.Y >= this.ClientSize.Height - grip) m.Result = (IntPtr)16; // BOTTOMLEFT
+                else if (pos.X >= this.ClientSize.Width - grip && pos.Y >= this.ClientSize.Height - grip) m.Result = (IntPtr)17; // BOTTOMRIGHT
+                else if (pos.X <= grip) m.Result = (IntPtr)10; // LEFT
+                else if (pos.X >= this.ClientSize.Width - grip) m.Result = (IntPtr)11; // RIGHT
+                else if (pos.Y <= grip) m.Result = (IntPtr)12; // TOP
+                else if (pos.Y >= this.ClientSize.Height - grip) m.Result = (IntPtr)15; // BOTTOM
             }
         }
 
@@ -82,6 +116,8 @@ namespace SwitchRemoteGUI
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
+            // サイズ変更時に再描画して枠線をきれいに保つ
+            this.Invalidate();
             UpdateLayout();
         }
 
@@ -124,7 +160,7 @@ namespace SwitchRemoteGUI
             lblDragBar = new Label();
             lblDragBar.Text = ":::: Switch Controller ::::";
             lblDragBar.TextAlign = ContentAlignment.MiddleCenter;
-            lblDragBar.BackColor = Color.FromArgb(50, 50, 50);
+            lblDragBar.BackColor = Color.FromArgb(40, 40, 40); // バーも少し暗めに
             lblDragBar.ForeColor = Color.White;
             lblDragBar.Height = 24;
             lblDragBar.MouseDown += DragBar_MouseDown;
@@ -179,7 +215,8 @@ namespace SwitchRemoteGUI
 
             int W = this.ClientSize.Width;
             int H = this.ClientSize.Height;
-            int pad = 10;
+            // 枠線の分だけ内側に配置
+            int pad = borderSize;
             int innerW = W - pad * 2;
             int innerX = pad;
             int innerY = pad;
@@ -187,11 +224,10 @@ namespace SwitchRemoteGUI
             // ドラッグバー
             lblDragBar.Bounds = new Rectangle(innerX, innerY, innerW, 24);
 
-            // ★設定: サブボタンの高さ (ここを揃える！)
             int stdH = 35;
             int margin = 5;
 
-            // --- 上から配置 (OBS, ショルダー) ---
+            // --- 上から配置 ---
             int yObs = innerY + 24 + margin;
             btnObsShow.Bounds = new Rectangle(innerX, yObs, (innerW - margin) / 2, stdH);
             btnObsHide.Bounds = new Rectangle(innerX + (innerW - margin) / 2 + margin, yObs, (innerW - margin) / 2, stdH);
@@ -204,14 +240,12 @@ namespace SwitchRemoteGUI
             btnR.Bounds = new Rectangle(innerX + (shW + margin) * 3, ySh, shW, stdH);
             btnZR.Bounds = new Rectangle(innerX + (shW + margin) * 4, ySh, shW, stdH);
 
-            // --- 下から配置 (L3/R3, システム) ---
-            // L3/R3 を一番下に配置し、高さは stdH で固定
+            // --- 下から配置 ---
             int yStick = H - pad - stdH;
             int stickW = (innerW - margin) / 2;
             btnL3.Bounds = new Rectangle(innerX, yStick, stickW, stdH);
             btnR3.Bounds = new Rectangle(innerX + stickW + margin, yStick, stickW, stdH);
 
-            // システムボタン (L3/R3 の上)
             int ySys = yStick - margin - stdH;
             int sysW = (innerW - margin * 3) / 4;
             btnMinus.Bounds = new Rectangle(innerX, ySys, sysW, stdH);
@@ -219,18 +253,15 @@ namespace SwitchRemoteGUI
             btnCap.Bounds = new Rectangle(innerX + (sysW + margin) * 2, ySys, sysW, stdH);
             btnPlus.Bounds = new Rectangle(innerX + (sysW + margin) * 3, ySys, sysW, stdH);
 
-            // --- 残った中央スペースを 十字キー/ABXY に全振り ---
+            // --- 十字キー/ABXY (中央) ---
             int yMainTop = ySh + stdH + margin;
             int yMainBottom = ySys - margin;
             int mainH = yMainBottom - yMainTop;
 
-            // ボタン1個のサイズ計算 (幅と高さ、小さい方に合わせる)
-            // 幅: 全幅の半分(Dpadエリア) ÷ 3列
-            // 高さ: メインエリアの高さ ÷ 3行
             int btnSize = Math.Min((innerW / 2 - margin) / 3, mainH / 3);
-            btnSize = Math.Max(20, btnSize); // 最小サイズ保護
+            btnSize = Math.Max(20, btnSize);
 
-            // Dpad (左側)
+            // 十字キー (左)
             int leftCenterX = innerX + innerW / 4;
             int mainCenterY = yMainTop + mainH / 2;
 
@@ -239,7 +270,7 @@ namespace SwitchRemoteGUI
             btnRight.Bounds = new Rectangle(leftCenterX - btnSize / 2 + btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
             btnDown.Bounds = new Rectangle(leftCenterX - btnSize / 2, mainCenterY - btnSize / 2 + btnSize, btnSize, btnSize);
 
-            // ABXY (右側)
+            // ABXY (右)
             int rightCenterX = innerX + innerW * 3 / 4;
 
             btnX.Bounds = new Rectangle(rightCenterX - btnSize / 2, mainCenterY - btnSize / 2 - btnSize, btnSize, btnSize);
@@ -247,15 +278,14 @@ namespace SwitchRemoteGUI
             btnA.Bounds = new Rectangle(rightCenterX - btnSize / 2 + btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
             btnB.Bounds = new Rectangle(rightCenterX - btnSize / 2, mainCenterY - btnSize / 2 + btnSize, btnSize, btnSize);
 
-            // フォントサイズ調整 (メインボタンは大きく、サブは控えめに)
+            // フォント設定
             Font fontMain = new Font("Arial", Math.Max(10, btnSize / 3), FontStyle.Bold);
-            Font fontSub = new Font("Arial", 9, FontStyle.Bold); // サブは固定サイズで見やすく
+            Font fontSub = new Font("Arial", 9, FontStyle.Bold);
 
             foreach (Control c in this.Controls)
             {
                 if (c is Button)
                 {
-                    // メインボタン判定
                     bool isMain = (c == btnUp || c == btnLeft || c == btnRight || c == btnDown ||
                                    c == btnX || c == btnY || c == btnA || c == btnB);
                     c.Font = isMain ? fontMain : fontSub;
