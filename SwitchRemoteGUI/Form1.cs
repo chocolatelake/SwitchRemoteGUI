@@ -12,19 +12,48 @@ namespace SwitchRemoteGUI
         string portName = "COM5"; // ★自分のポート番号
         SerialPort port;
 
-        // Windows API
+        // Windows API (画面操作用)
         [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
         [DllImport("user32.dll")] private static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
         [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
         private const int SW_RESTORE = 9;
         private const int SW_MINIMIZE = 6;
 
+        // --- 安全装置：すべての準備が整ったかどうか ---
+        bool _isReady = false;
+
+        // --- ボタンの参照を保存しておく変数 ---
+        Button btnObsShow, btnObsHide;
+        Button btnZL, btnL, btnR, btnZR;
+        Button btnUp, btnLeft, btnDown, btnRight; // 十字キー
+        Button btnX, btnY, btnB, btnA;            // ABXY
+        Button btnMinus, btnHome, btnCap, btnPlus;
+        Button btnL3, btnR3;
+
         public Form1()
         {
             InitializeComponent();
-            this.TopMost = true;
-            SetupLayout();
+            this.TopMost = true; // 常に最前面
+            this.MinimumSize = new Size(300, 500); // これ以上小さくならないサイズ
+            this.BackColor = Color.FromArgb(30, 30, 30);
+            this.KeyPreview = true;
+            this.KeyDown += Form1_KeyDown;
+
             ConnectPort();
+            CreateButtons(); // ボタンを作る
+
+            // ★全てのボタンを作り終わったので、ここで「準備完了」にする
+            _isReady = true;
+
+            // 最後に一回、手動で整列させる
+            UpdateLayout();
+        }
+
+        // ウィンドウのサイズが変わるたびに呼ばれる関数
+        protected override void OnLayout(LayoutEventArgs levent)
+        {
+            base.OnLayout(levent);
+            UpdateLayout(); // サイズに合わせてボタンを並べ直す
         }
 
         void ConnectPort()
@@ -33,9 +62,9 @@ namespace SwitchRemoteGUI
             {
                 port = new SerialPort(portName, 9600);
                 port.Open();
-                this.Text = "Switch Pad";
+                this.Text = "Switch Resizable";
             }
-            catch (Exception ex) { MessageBox.Show("接続エラー: " + ex.Message); }
+            catch (Exception ex) { /* 接続エラーは一旦無視 */ }
         }
 
         void Send(string cmd)
@@ -62,75 +91,128 @@ namespace SwitchRemoteGUI
             }
         }
 
-        void SetupLayout()
+        // --- 1. ボタンを作成する関数 ---
+        void CreateButtons()
         {
-            this.Size = new Size(450, 650); // 横幅はキープ、縦は少しコンパクトに
-            this.BackColor = Color.FromArgb(30, 30, 30);
-            this.KeyPreview = true;
-            this.KeyDown += Form1_KeyDown;
-
-            // ボタン生成ヘルパー
-            Button CreateBtn(string text, int x, int y, string cmd, int w = 60, int h = 60, Color? bg = null)
+            // ヘルパー関数
+            Button MkBtn(string txt, string cmd, Color? bg = null)
             {
                 Button b = new Button();
-                b.Text = text;
-                b.Location = new Point(x, y);
-                b.Size = new Size(w, h);
-                b.Font = new Font("Arial", 11, FontStyle.Bold);
+                b.Text = txt;
                 b.BackColor = bg ?? Color.White;
                 b.FlatStyle = FlatStyle.Flat;
+                b.TabStop = false; // フォーカスを奪わない
                 if (cmd != "") b.Click += (s, e) => Send(cmd);
-                b.TabStop = false;
                 this.Controls.Add(b);
                 return b;
             }
 
-            // --- 1. OBS操作 (最上部) ---
-            CreateBtn("📺 戻す", 20, 10, "", 190, 40, Color.LightSkyBlue)
-                .Click += (s, e) => ControlApp("obs", true);
-            CreateBtn("＿ 隠す", 220, 10, "", 190, 40, Color.LightGray)
-                .Click += (s, e) => ControlApp("obs", false);
+            // OBS操作
+            btnObsShow = MkBtn("📺 戻す", "", Color.LightSkyBlue);
+            btnObsShow.Click += (s, e) => ControlApp("obs", true);
+            btnObsHide = MkBtn("＿ 隠す", "", Color.LightGray);
+            btnObsHide.Click += (s, e) => ControlApp("obs", false);
 
-            // 基準位置（コントローラー部分の開始Y座標）
-            int startY = 80;
+            // ショルダー
+            btnZL = MkBtn("ZL", "e", Color.DarkGray);
+            btnL = MkBtn("L", "q", Color.Gray);
+            btnR = MkBtn("R", "w", Color.Gray);
+            btnZR = MkBtn("ZR", "r", Color.DarkGray);
 
-            // --- 2. ショルダーボタン (L/ZL, R/ZR) ---
-            // 左側
-            CreateBtn("ZL", 20, startY, "e", 80, 45, Color.DarkGray);
-            CreateBtn("L", 110, startY, "q", 80, 45, Color.Gray);
-            // 右側
-            CreateBtn("R", 240, startY, "w", 80, 45, Color.Gray);
-            CreateBtn("ZR", 330, startY, "r", 80, 45, Color.DarkGray);
+            // 十字キー
+            btnUp = MkBtn("↑", "I");
+            btnLeft = MkBtn("←", "J");
+            btnDown = MkBtn("↓", "K");
+            btnRight = MkBtn("→", "L");
 
-            // --- 3. メインエリア (十字キーとABXYを同じ高さに！) ---
-            int mainY = startY + 60;
-            int btnSize = 55; // 少し小さめにして配置しやすく
+            // ABXY
+            btnX = MkBtn("X", "s", Color.Yellow);
+            btnY = MkBtn("Y", "a", Color.LightGreen);
+            btnB = MkBtn("B", "x", Color.Red);
+            btnA = MkBtn("A", "z", Color.Cyan);
 
-            // 【左側】十字キーエリア
-            int padX = 30;
-            CreateBtn("↑", padX + btnSize, mainY, "I", btnSize, btnSize);
-            CreateBtn("←", padX, mainY + btnSize, "J", btnSize, btnSize);
-            CreateBtn("↓", padX + btnSize, mainY + btnSize, "K", btnSize, btnSize);
-            CreateBtn("→", padX + btnSize * 2, mainY + btnSize, "L", btnSize, btnSize);
+            // システム
+            btnMinus = MkBtn("-", "m", Color.LightGray);
+            btnHome = MkBtn("🏠", "h", Color.LightBlue);
+            btnCap = MkBtn("📷", "c", Color.Pink);
+            btnPlus = MkBtn("+", "n", Color.LightGray);
 
-            // 【右側】ABXYエリア
-            int abxyX = 250;
-            CreateBtn("X", abxyX + btnSize, mainY, "s", btnSize, btnSize, Color.Yellow);
-            CreateBtn("Y", abxyX, mainY + btnSize, "a", btnSize, btnSize, Color.LightGreen);
-            CreateBtn("B", abxyX + btnSize, mainY + btnSize * 2, "x", btnSize, btnSize, Color.Red); // Bは下
-            CreateBtn("A", abxyX + btnSize * 2, mainY + btnSize, "z", btnSize, btnSize, Color.Cyan); // Aは右
+            // スティック押し込み
+            btnL3 = MkBtn("L3", "3", Color.Silver);
+            btnR3 = MkBtn("R3", "4", Color.Silver);
+        }
 
-            // --- 4. システムボタン (中央配置) ---
-            int sysY = mainY + btnSize * 3 + 20;
-            CreateBtn("-", 100, sysY, "m", 50, 40, Color.LightGray);
-            CreateBtn("🏠", 160, sysY, "h", 50, 40, Color.LightBlue);
-            CreateBtn("📷", 220, sysY, "c", 50, 40, Color.Pink);
-            CreateBtn("+", 280, sysY, "n", 50, 40, Color.LightGray);
+        // --- 2. 画面サイズに合わせて位置と大きさを計算する関数 ---
+        void UpdateLayout()
+        {
+            // 【★最強の安全装置】
+            // 全部のボタンを作り終わる(_isReadyがtrueになる)までは、何もしないで帰る！
+            if (!_isReady) return;
 
-            // --- 5. スティック押し込み (最下部) ---
-            int stickY = sysY + 60;
-            CreateBtn("L3", 80, stickY, "3", 100, 50, Color.Silver);
-            CreateBtn("R3", 250, stickY, "4", 100, 50, Color.Silver);
+            int W = this.ClientSize.Width;
+            int H = this.ClientSize.Height;
+
+            int baseSize = Math.Min(W / 6, H / 12);
+            int fontSz = Math.Max(8, baseSize / 3);
+
+            foreach (Control c in this.Controls) { if (c is Button) c.Font = new Font("Arial", fontSz, FontStyle.Bold); }
+
+            int margin = baseSize / 4;
+
+            // --- 配置計算 (上から順に) ---
+
+            // 1. OBSボタン
+            int obsH = baseSize / 2 + 10;
+            btnObsShow.Bounds = new Rectangle(margin, margin, (W / 2) - margin * 2, obsH);
+            btnObsHide.Bounds = new Rectangle(W / 2 + margin, margin, (W / 2) - margin * 2, obsH);
+
+            // 2. ショルダーボタン
+            int shY = margin * 2 + obsH;
+            int shW = (W - margin * 5) / 4;
+            int shH = baseSize / 2 + 10;
+
+            btnZL.Bounds = new Rectangle(margin, shY, shW, shH);
+            btnL.Bounds = new Rectangle(margin * 2 + shW, shY, shW, shH);
+            btnR.Bounds = new Rectangle(margin * 3 + shW * 2, shY, shW, shH);
+            btnZR.Bounds = new Rectangle(margin * 4 + shW * 3, shY, shW, shH);
+
+            // 3. メインエリア
+            int mainY = shY + shH + margin * 2;
+            int btnSize = baseSize;
+            int leftCenterX = W / 4;
+            int rightCenterX = W * 3 / 4;
+
+            // 十字キー
+            btnUp.Bounds = new Rectangle(leftCenterX - btnSize / 2, mainY, btnSize, btnSize);
+            btnLeft.Bounds = new Rectangle(leftCenterX - btnSize / 2 - btnSize, mainY + btnSize, btnSize, btnSize);
+            btnDown.Bounds = new Rectangle(leftCenterX - btnSize / 2, mainY + btnSize, btnSize, btnSize);
+            btnRight.Bounds = new Rectangle(leftCenterX - btnSize / 2 + btnSize, mainY + btnSize, btnSize, btnSize);
+            btnDown.Location = new Point(leftCenterX - btnSize / 2, mainY + btnSize * 2);
+            btnLeft.Location = new Point(leftCenterX - btnSize / 2 - btnSize, mainY + btnSize);
+            btnRight.Location = new Point(leftCenterX - btnSize / 2 + btnSize, mainY + btnSize);
+
+            // ABXY
+            btnX.Bounds = new Rectangle(rightCenterX - btnSize / 2, mainY, btnSize, btnSize);
+            btnA.Bounds = new Rectangle(rightCenterX - btnSize / 2 + btnSize, mainY + btnSize, btnSize, btnSize);
+            btnB.Bounds = new Rectangle(rightCenterX - btnSize / 2, mainY + btnSize * 2, btnSize, btnSize);
+            btnY.Bounds = new Rectangle(rightCenterX - btnSize / 2 - btnSize, mainY + btnSize, btnSize, btnSize);
+
+            // 4. システムボタン
+            int sysY = mainY + btnSize * 3 + margin * 2;
+            int sysW = (W - margin * 5) / 4;
+            int sysH = baseSize / 2 + 10;
+
+            btnMinus.Bounds = new Rectangle(margin, sysY, sysW, sysH);
+            btnHome.Bounds = new Rectangle(margin * 2 + sysW, sysY, sysW, sysH);
+            btnCap.Bounds = new Rectangle(margin * 3 + sysW * 2, sysY, sysW, sysH);
+            btnPlus.Bounds = new Rectangle(margin * 4 + sysW * 3, sysY, sysW, sysH);
+
+            // 5. スティック押し込み
+            int stickY = sysY + sysH + margin * 2;
+            int stickW = W / 3;
+
+            btnL3.Bounds = new Rectangle(margin, stickY, stickW, sysH * 2);
+            btnR3.Bounds = new Rectangle(W - stickW - margin, stickY, stickW, sysH * 2);
         }
 
         private void Form1_KeyDown(object sender, KeyEventArgs e)
