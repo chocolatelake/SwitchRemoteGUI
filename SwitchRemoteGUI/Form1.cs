@@ -12,17 +12,17 @@ namespace SwitchRemoteGUI
         string portName = "COM5"; // ★自分のポート番号
         SerialPort port;
 
-        // --- Windows操作用の呪文 ---
+        // Windows API
         [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
         [DllImport("user32.dll")] private static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
         [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
         private const int SW_RESTORE = 9;
-        private const int SW_MINIMIZE = 6; // 最小化用
+        private const int SW_MINIMIZE = 6;
 
         public Form1()
         {
             InitializeComponent();
-            this.TopMost = true; // 常に最前面
+            this.TopMost = true;
             SetupLayout();
             ConnectPort();
         }
@@ -33,7 +33,7 @@ namespace SwitchRemoteGUI
             {
                 port = new SerialPort(portName, 9600);
                 port.Open();
-                this.Text = "Switch Pro Controller";
+                this.Text = "Switch Pad";
             }
             catch (Exception ex) { MessageBox.Show("接続エラー: " + ex.Message); }
         }
@@ -43,7 +43,6 @@ namespace SwitchRemoteGUI
             if (port != null && port.IsOpen) port.Write(cmd);
         }
 
-        // 指定したアプリ(OBSなど)を操作する関数
         void ControlApp(string keyword, bool show)
         {
             Process[] processList = Process.GetProcesses();
@@ -54,15 +53,10 @@ namespace SwitchRemoteGUI
                 {
                     if (show)
                     {
-                        // 表示・復元
                         if (IsIconic(p.MainWindowHandle)) ShowWindowAsync(p.MainWindowHandle, SW_RESTORE);
                         SetForegroundWindow(p.MainWindowHandle);
                     }
-                    else
-                    {
-                        // 最小化（隠す）
-                        ShowWindowAsync(p.MainWindowHandle, SW_MINIMIZE);
-                    }
+                    else ShowWindowAsync(p.MainWindowHandle, SW_MINIMIZE);
                     return;
                 }
             }
@@ -70,90 +64,97 @@ namespace SwitchRemoteGUI
 
         void SetupLayout()
         {
-            this.Size = new Size(600, 450); // 横長に変更
-            this.BackColor = Color.FromArgb(40, 40, 40); // ダークモードっぽく
+            this.Size = new Size(450, 650); // 横幅はキープ、縦は少しコンパクトに
+            this.BackColor = Color.FromArgb(30, 30, 30);
             this.KeyPreview = true;
             this.KeyDown += Form1_KeyDown;
 
-            // ボタン生成関数 (色やフォントをかっこよく)
+            // ボタン生成ヘルパー
             Button CreateBtn(string text, int x, int y, string cmd, int w = 60, int h = 60, Color? bg = null)
             {
                 Button b = new Button();
                 b.Text = text;
                 b.Location = new Point(x, y);
                 b.Size = new Size(w, h);
-                b.Font = new Font("Arial", 12, FontStyle.Bold);
+                b.Font = new Font("Arial", 11, FontStyle.Bold);
                 b.BackColor = bg ?? Color.White;
-                b.FlatStyle = FlatStyle.Flat; // フラットデザイン
+                b.FlatStyle = FlatStyle.Flat;
                 if (cmd != "") b.Click += (s, e) => Send(cmd);
                 b.TabStop = false;
                 this.Controls.Add(b);
                 return b;
             }
 
-            // --- 上部ツールバー ---
-            // OBSを表示
-            Button btnShow = CreateBtn("📺 画面を戻す", 20, 10, "", 270, 40, Color.LightSkyBlue);
-            btnShow.Click += (s, e) => ControlApp("obs", true); // "obs"を探して表示
+            // --- 1. OBS操作 (最上部) ---
+            CreateBtn("📺 戻す", 20, 10, "", 190, 40, Color.LightSkyBlue)
+                .Click += (s, e) => ControlApp("obs", true);
+            CreateBtn("＿ 隠す", 220, 10, "", 190, 40, Color.LightGray)
+                .Click += (s, e) => ControlApp("obs", false);
 
-            // OBSを隠す
-            Button btnHide = CreateBtn("＿ 画面を隠す", 300, 10, "", 270, 40, Color.LightGray);
-            btnHide.Click += (s, e) => ControlApp("obs", false); // "obs"を探して最小化
+            // 基準位置（コントローラー部分の開始Y座標）
+            int startY = 80;
 
-            // --- L/R系 (上段) ---
-            CreateBtn("ZL", 30, 70, "e", 80, 40, Color.Gray);
-            CreateBtn("L", 120, 70, "q", 80, 40, Color.Gray);
+            // --- 2. ショルダーボタン (L/ZL, R/ZR) ---
+            // 左側
+            CreateBtn("ZL", 20, startY, "e", 80, 45, Color.DarkGray);
+            CreateBtn("L", 110, startY, "q", 80, 45, Color.Gray);
+            // 右側
+            CreateBtn("R", 240, startY, "w", 80, 45, Color.Gray);
+            CreateBtn("ZR", 330, startY, "r", 80, 45, Color.DarkGray);
 
-            CreateBtn("R", 390, 70, "w", 80, 40, Color.Gray);
-            CreateBtn("ZR", 480, 70, "r", 80, 40, Color.Gray);
+            // --- 3. メインエリア (十字キーとABXYを同じ高さに！) ---
+            int mainY = startY + 60;
+            int btnSize = 55; // 少し小さめにして配置しやすく
 
-            // --- 左側 (十字キー) ---
-            int dpadX = 80;
-            int dpadY = 150;
-            CreateBtn("↑", dpadX + 60, dpadY, "I", 60, 60);
-            CreateBtn("←", dpadX, dpadY + 70, "J", 60, 60);
-            CreateBtn("↓", dpadX + 60, dpadY + 70, "K", 60, 60);
-            CreateBtn("→", dpadX + 120, dpadY + 70, "L", 60, 60);
+            // 【左側】十字キーエリア
+            int padX = 30;
+            CreateBtn("↑", padX + btnSize, mainY, "I", btnSize, btnSize);
+            CreateBtn("←", padX, mainY + btnSize, "J", btnSize, btnSize);
+            CreateBtn("↓", padX + btnSize, mainY + btnSize, "K", btnSize, btnSize);
+            CreateBtn("→", padX + btnSize * 2, mainY + btnSize, "L", btnSize, btnSize);
 
-            // --- 右側 (ABXY) ---
-            int abxyX = 400;
-            int abxyY = 150;
-            CreateBtn("X", abxyX + 60, abxyY, "s", 60, 60);
-            CreateBtn("Y", abxyX, abxyY + 70, "a", 60, 60);
-            CreateBtn("B", abxyX + 60, abxyY + 140, "x", 60, 60); // Bは下
-            CreateBtn("A", abxyX + 120, abxyY + 70, "z", 60, 60); // Aは右
+            // 【右側】ABXYエリア
+            int abxyX = 250;
+            CreateBtn("X", abxyX + btnSize, mainY, "s", btnSize, btnSize, Color.Yellow);
+            CreateBtn("Y", abxyX, mainY + btnSize, "a", btnSize, btnSize, Color.LightGreen);
+            CreateBtn("B", abxyX + btnSize, mainY + btnSize * 2, "x", btnSize, btnSize, Color.Red); // Bは下
+            CreateBtn("A", abxyX + btnSize * 2, mainY + btnSize, "z", btnSize, btnSize, Color.Cyan); // Aは右
 
-            // --- 中央 (システムボタン) ---
-            CreateBtn("-", 230, 150, "m", 40, 40, Color.LightGray);
-            CreateBtn("+", 320, 150, "n", 40, 40, Color.LightGray);
+            // --- 4. システムボタン (中央配置) ---
+            int sysY = mainY + btnSize * 3 + 20;
+            CreateBtn("-", 100, sysY, "m", 50, 40, Color.LightGray);
+            CreateBtn("🏠", 160, sysY, "h", 50, 40, Color.LightBlue);
+            CreateBtn("📷", 220, sysY, "c", 50, 40, Color.Pink);
+            CreateBtn("+", 280, sysY, "n", 50, 40, Color.LightGray);
 
-            CreateBtn("🏠", 275, 220, "h", 40, 40, Color.LightBlue); // HOME
-            CreateBtn("📷", 275, 280, "c", 40, 40, Color.Pink);      // Capture
+            // --- 5. スティック押し込み (最下部) ---
+            int stickY = sysY + 60;
+            CreateBtn("L3", 80, stickY, "3", 100, 50, Color.Silver);
+            CreateBtn("R3", 250, stickY, "4", 100, 50, Color.Silver);
         }
 
         private void Form1_KeyDown(object sender, KeyEventArgs e)
         {
             switch (e.KeyCode)
             {
-                // ボタン
-                case Keys.Z: Send("z"); break; // A
-                case Keys.X: Send("x"); break; // B
-                case Keys.S: Send("s"); break; // X
-                case Keys.A: Send("a"); break; // Y
-                case Keys.Q: Send("q"); break; // L
-                case Keys.W: Send("w"); break; // R
-                case Keys.E: Send("e"); break; // ZL
-                case Keys.R: Send("r"); break; // ZR
-                case Keys.Enter: Send("n"); break; // Plus
-                case Keys.Back: Send("m"); break;  // Minus
-                case Keys.Escape: Send("h"); break; // Home
-                case Keys.C: Send("c"); break;      // Capture
-
-                // 移動
+                case Keys.Z: Send("z"); break;
+                case Keys.X: Send("x"); break;
+                case Keys.S: Send("s"); break;
+                case Keys.A: Send("a"); break;
+                case Keys.Q: Send("q"); break;
+                case Keys.W: Send("w"); break;
+                case Keys.E: Send("e"); break;
+                case Keys.R: Send("r"); break;
+                case Keys.Enter: Send("n"); break;
+                case Keys.Back: Send("m"); break;
+                case Keys.Escape: Send("h"); break;
+                case Keys.C: Send("c"); break;
                 case Keys.I: Send("I"); break;
                 case Keys.J: Send("J"); break;
                 case Keys.K: Send("K"); break;
                 case Keys.L: Send("L"); break;
+                case Keys.T: Send("3"); break;
+                case Keys.Y: Send("4"); break;
             }
         }
 
