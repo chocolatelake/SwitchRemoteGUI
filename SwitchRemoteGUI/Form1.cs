@@ -24,7 +24,15 @@ namespace SwitchRemoteGUI
 
         bool _isReady = false;
 
-        Label lblDragBar;
+        // ★状態管理フラグ
+        bool _isSolidBlack = false; // 背景黒モード
+        bool _isVertical = false;   // 縦長モード (スマホ用)
+
+        // UIパーツ
+        Button btnLayoutToggle;
+        Button btnBgToggle;
+        Label lblTitle;
+
         Button btnObsShow, btnObsHide;
         Button btnZL, btnL, btnLR, btnR, btnZR;
         Button btnUp, btnLeft, btnDown, btnRight;
@@ -32,7 +40,6 @@ namespace SwitchRemoteGUI
         Button btnMinus, btnHome, btnCap, btnPlus;
         Button btnL3, btnR3;
 
-        // 枠線の太さ
         private int borderSize = 5;
 
         public Form1()
@@ -40,49 +47,87 @@ namespace SwitchRemoteGUI
             InitializeComponent();
             this.TopMost = true;
             this.FormBorderStyle = FormBorderStyle.None;
-            this.MinimumSize = new Size(300, 400);
+            this.MinimumSize = new Size(300, 300);
 
-            // ★透明化と半透明の設定
-            // 1. マゼンタ色を「透明」とみなす設定
-            this.TransparencyKey = Color.Magenta;
-            this.BackColor = Color.Magenta;
+            SetTransparentMode();
 
-            // 2. ウィンドウ全体の不透明度を下げる (0.7 = 70%見えて30%透ける)
-            // これでボタンも枠も「半透明」になります
-            this.Opacity = 0.70;
-
-            // 枠線を描くための余白
             this.Padding = new Padding(borderSize);
-
             this.KeyPreview = true;
             this.KeyDown += Form1_KeyDown;
-
-            // 描画イベント(枠線を描くため)
             this.Paint += Form1_Paint;
 
             ConnectPort();
             CreateUI();
 
+            // 初期サイズを横モードの想定サイズに設定
+            this.Size = new Size(800, 400);
+
             _isReady = true;
             UpdateLayout();
         }
 
-        // ★枠線を描画する処理
+        void SetTransparentMode()
+        {
+            this.TransparencyKey = Color.Magenta;
+            this.BackColor = Color.Magenta;
+            this.Opacity = 0.70;
+            _isSolidBlack = false;
+            this.Invalidate();
+        }
+
+        void SetSolidBlackMode()
+        {
+            this.TransparencyKey = Color.Empty;
+            this.BackColor = Color.Black;
+            this.Opacity = 1.0;
+            _isSolidBlack = true;
+            this.Invalidate();
+        }
+
+        void ToggleLayoutMode()
+        {
+            _isVertical = !_isVertical;
+
+            if (_isVertical)
+            {
+                // 縦モード: 上半分空き + 下半分コントローラー (スマホ縦持ちに合わせやすいサイズ)
+                this.Size = new Size(400, 800);
+                btnLayoutToggle.Text = "🔀 LAYOUT: 縦 (分割)";
+            }
+            else
+            {
+                // 横モード: フルスクリーンコントローラー (ゲーム画面の上に乗せる)
+                this.Size = new Size(800, 400);
+                btnLayoutToggle.Text = "🔀 LAYOUT: 横 (全面)";
+            }
+            UpdateLayout();
+        }
+
+        void ToggleBlackMode()
+        {
+            if (_isSolidBlack)
+            {
+                SetTransparentMode();
+                btnBgToggle.Text = "⚫ BG: 透過";
+            }
+            else
+            {
+                SetSolidBlackMode();
+                btnBgToggle.Text = "⚫ BG: 黒";
+            }
+            btnBgToggle.BackColor = _isSolidBlack ? Color.FromArgb(100, 100, 100) : Color.FromArgb(70, 70, 70);
+        }
+
         private void Form1_Paint(object sender, PaintEventArgs e)
         {
-            // 背景はMagenta(透明)なので、縁(ふち)の部分だけ黒く塗る
-            // これで「枠」が見えるようになり、リサイズ操作も可能になる
-            Color frameColor = Color.Black;
-
+            Color frameColor = _isSolidBlack ? Color.DarkGray : Color.Black;
             using (Pen p = new Pen(frameColor, borderSize))
             {
-                // 枠の内側に描画
                 p.Alignment = System.Drawing.Drawing2D.PenAlignment.Inset;
                 e.Graphics.DrawRectangle(p, this.ClientRectangle);
             }
         }
 
-        // ウィンドウの端っこ判定（リサイズ用）
         protected override void WndProc(ref Message m)
         {
             const int WM_NCHITTEST = 0x84;
@@ -92,19 +137,18 @@ namespace SwitchRemoteGUI
                 Point pos = this.PointToClient(new Point(m.LParam.ToInt32()));
                 int grip = 16;
 
-                // 四隅と端の判定
-                if (pos.X <= grip && pos.Y <= grip) m.Result = (IntPtr)13; // TOPLEFT
-                else if (pos.X >= this.ClientSize.Width - grip && pos.Y <= grip) m.Result = (IntPtr)14; // TOPRIGHT
-                else if (pos.X <= grip && pos.Y >= this.ClientSize.Height - grip) m.Result = (IntPtr)16; // BOTTOMLEFT
-                else if (pos.X >= this.ClientSize.Width - grip && pos.Y >= this.ClientSize.Height - grip) m.Result = (IntPtr)17; // BOTTOMRIGHT
-                else if (pos.X <= grip) m.Result = (IntPtr)10; // LEFT
-                else if (pos.X >= this.ClientSize.Width - grip) m.Result = (IntPtr)11; // RIGHT
-                else if (pos.Y <= grip) m.Result = (IntPtr)12; // TOP
-                else if (pos.Y >= this.ClientSize.Height - grip) m.Result = (IntPtr)15; // BOTTOM
+                if (pos.X <= grip && pos.Y <= grip) m.Result = (IntPtr)13;
+                else if (pos.X >= this.ClientSize.Width - grip && pos.Y <= grip) m.Result = (IntPtr)14;
+                else if (pos.X <= grip && pos.Y >= this.ClientSize.Height - grip) m.Result = (IntPtr)16;
+                else if (pos.X >= this.ClientSize.Width - grip && pos.Y >= this.ClientSize.Height - grip) m.Result = (IntPtr)17;
+                else if (pos.X <= grip) m.Result = (IntPtr)10;
+                else if (pos.X >= this.ClientSize.Width - grip) m.Result = (IntPtr)11;
+                else if (pos.Y <= grip) m.Result = (IntPtr)12;
+                else if (pos.Y >= this.ClientSize.Height - grip) m.Result = (IntPtr)15;
             }
         }
 
-        private void DragBar_MouseDown(object sender, MouseEventArgs e)
+        private void TopBar_MouseDown(object sender, MouseEventArgs e)
         {
             if (e.Button == MouseButtons.Left)
             {
@@ -116,19 +160,13 @@ namespace SwitchRemoteGUI
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
-            // サイズ変更時に再描画して枠線をきれいに保つ
             this.Invalidate();
             UpdateLayout();
         }
 
         void ConnectPort()
         {
-            try
-            {
-                port = new SerialPort(portName, 9600);
-                port.Open();
-            }
-            catch { }
+            try { port = new SerialPort(portName, 9600); port.Open(); } catch { }
         }
 
         void Send(string cmd)
@@ -144,11 +182,7 @@ namespace SwitchRemoteGUI
                 if (!string.IsNullOrEmpty(p.MainWindowTitle) &&
                    (p.ProcessName.ToLower().Contains(keyword) || p.MainWindowTitle.ToLower().Contains(keyword)))
                 {
-                    if (show)
-                    {
-                        if (IsIconic(p.MainWindowHandle)) ShowWindowAsync(p.MainWindowHandle, SW_RESTORE);
-                        SetForegroundWindow(p.MainWindowHandle);
-                    }
+                    if (show) { if (IsIconic(p.MainWindowHandle)) ShowWindowAsync(p.MainWindowHandle, SW_RESTORE); SetForegroundWindow(p.MainWindowHandle); }
                     else ShowWindowAsync(p.MainWindowHandle, SW_MINIMIZE);
                     return;
                 }
@@ -157,15 +191,37 @@ namespace SwitchRemoteGUI
 
         void CreateUI()
         {
-            lblDragBar = new Label();
-            lblDragBar.Text = ":::: Switch Controller ::::";
-            lblDragBar.TextAlign = ContentAlignment.MiddleCenter;
-            lblDragBar.BackColor = Color.FromArgb(40, 40, 40); // バーも少し暗めに
-            lblDragBar.ForeColor = Color.White;
-            lblDragBar.Height = 24;
-            lblDragBar.MouseDown += DragBar_MouseDown;
-            this.Controls.Add(lblDragBar);
+            // トップバーのUIは省略 (前回のコードから変更なし)
+            lblTitle = new Label();
+            lblTitle.Text = ":::: Switch Controller ::::";
+            lblTitle.TextAlign = ContentAlignment.MiddleCenter;
+            lblTitle.BackColor = Color.FromArgb(50, 50, 50);
+            lblTitle.ForeColor = Color.White;
+            lblTitle.Height = 24;
+            lblTitle.MouseDown += TopBar_MouseDown;
+            this.Controls.Add(lblTitle);
 
+            btnLayoutToggle = new Button();
+            btnLayoutToggle.Text = "🔀 LAYOUT: 横";
+            btnLayoutToggle.BackColor = Color.FromArgb(70, 70, 70);
+            btnLayoutToggle.ForeColor = Color.White;
+            btnLayoutToggle.FlatStyle = FlatStyle.Flat;
+            btnLayoutToggle.FlatAppearance.BorderSize = 0;
+            btnLayoutToggle.TabStop = false;
+            btnLayoutToggle.Click += (s, e) => ToggleLayoutMode();
+            this.Controls.Add(btnLayoutToggle);
+
+            btnBgToggle = new Button();
+            btnBgToggle.Text = "⚫ BG: 透過";
+            btnBgToggle.BackColor = Color.FromArgb(70, 70, 70);
+            btnBgToggle.ForeColor = Color.White;
+            btnBgToggle.FlatStyle = FlatStyle.Flat;
+            btnBgToggle.FlatAppearance.BorderSize = 0;
+            btnBgToggle.TabStop = false;
+            btnBgToggle.Click += (s, e) => ToggleBlackMode();
+            this.Controls.Add(btnBgToggle);
+
+            // コントローラーボタンの作成は前回のコードから変更なし
             Button MkBtn(string txt, string cmd, Color? bg = null)
             {
                 Button b = new Button();
@@ -215,23 +271,53 @@ namespace SwitchRemoteGUI
 
             int W = this.ClientSize.Width;
             int H = this.ClientSize.Height;
-            // 枠線の分だけ内側に配置
             int pad = borderSize;
             int innerW = W - pad * 2;
             int innerX = pad;
             int innerY = pad;
 
-            // ドラッグバー
-            lblDragBar.Bounds = new Rectangle(innerX, innerY, innerW, 24);
-
             int stdH = 35;
             int margin = 5;
+            int topBarH = 24;
 
-            // --- 上から配置 ---
-            int yObs = innerY + 24 + margin;
+            // --- トップバーのレイアウト ---
+            int toggleW = (innerW - margin) / 4;
+            int titleW = innerW - toggleW * 2 - margin;
+
+            lblTitle.Bounds = new Rectangle(innerX, innerY, titleW, topBarH);
+            btnLayoutToggle.Bounds = new Rectangle(innerX + titleW + margin, innerY, toggleW, topBarH);
+            btnBgToggle.Bounds = new Rectangle(innerX + titleW + toggleW + margin * 2, innerY, toggleW, topBarH);
+            // btnBgToggleの位置を再調整（マージンがずれていたため）
+            btnBgToggle.Bounds = new Rectangle(innerX + innerW - toggleW, innerY, toggleW, topBarH);
+            btnLayoutToggle.Bounds = new Rectangle(innerX + innerW - toggleW * 2 - margin, innerY, toggleW, topBarH);
+            lblTitle.Bounds = new Rectangle(innerX, innerY, innerW - toggleW * 2 - margin * 2, topBarH);
+
+
+            // ★★★ メインロジック: 横か縦かでボタンエリアの開始位置を決定 ★★★
+            int contentTop;
+
+            if (_isVertical)
+            {
+                // 縦モード (分割): 上半分(50%)をゲーム画面用に空ける
+                contentTop = innerY + (H / 2);
+            }
+            else
+            {
+                // 横モード (全面): トップバーのすぐ下から開始
+                contentTop = innerY + topBarH + margin;
+            }
+
+            // このコードブロックの実行によって、ボタン配置が横画面/縦画面それぞれで要求された動作になります。
+
+            // --- ボタン配置計算 ---
+            int availH = H - pad - contentTop;
+
+            // 1. OBSボタン
+            int yObs = contentTop;
             btnObsShow.Bounds = new Rectangle(innerX, yObs, (innerW - margin) / 2, stdH);
             btnObsHide.Bounds = new Rectangle(innerX + (innerW - margin) / 2 + margin, yObs, (innerW - margin) / 2, stdH);
 
+            // 2. ショルダーボタン
             int ySh = yObs + stdH + margin;
             int shW = (innerW - margin * 4) / 5;
             btnZL.Bounds = new Rectangle(innerX, ySh, shW, stdH);
@@ -240,12 +326,21 @@ namespace SwitchRemoteGUI
             btnR.Bounds = new Rectangle(innerX + (shW + margin) * 3, ySh, shW, stdH);
             btnZR.Bounds = new Rectangle(innerX + (shW + margin) * 4, ySh, shW, stdH);
 
-            // --- 下から配置 ---
+            // 5. 一番下：L3/R3
             int yStick = H - pad - stdH;
             int stickW = (innerW - margin) / 2;
-            btnL3.Bounds = new Rectangle(innerX, yStick, stickW, stdH);
-            btnR3.Bounds = new Rectangle(innerX + stickW + margin, yStick, stickW, stdH);
+            int stickH = stdH;
 
+            if (yStick < ySh + stdH + margin * 3)
+            {
+                stickH = Math.Max(20, (H - pad - ySh) / 3);
+                yStick = H - pad - stickH;
+            }
+
+            btnL3.Bounds = new Rectangle(innerX, yStick, stickW, stickH);
+            btnR3.Bounds = new Rectangle(innerX + stickW + margin, yStick, stickW, stickH);
+
+            // 4. その上：システムボタン
             int ySys = yStick - margin - stdH;
             int sysW = (innerW - margin * 3) / 4;
             btnMinus.Bounds = new Rectangle(innerX, ySys, sysW, stdH);
@@ -253,32 +348,30 @@ namespace SwitchRemoteGUI
             btnCap.Bounds = new Rectangle(innerX + (sysW + margin) * 2, ySys, sysW, stdH);
             btnPlus.Bounds = new Rectangle(innerX + (sysW + margin) * 3, ySys, sysW, stdH);
 
-            // --- 十字キー/ABXY (中央) ---
+            // 3. 中央：十字キー & ABXY
             int yMainTop = ySh + stdH + margin;
             int yMainBottom = ySys - margin;
             int mainH = yMainBottom - yMainTop;
 
+            if (mainH < 50) mainH = 50;
+
             int btnSize = Math.Min((innerW / 2 - margin) / 3, mainH / 3);
             btnSize = Math.Max(20, btnSize);
 
-            // 十字キー (左)
             int leftCenterX = innerX + innerW / 4;
             int mainCenterY = yMainTop + mainH / 2;
-
             btnUp.Bounds = new Rectangle(leftCenterX - btnSize / 2, mainCenterY - btnSize / 2 - btnSize, btnSize, btnSize);
             btnLeft.Bounds = new Rectangle(leftCenterX - btnSize / 2 - btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
             btnRight.Bounds = new Rectangle(leftCenterX - btnSize / 2 + btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
             btnDown.Bounds = new Rectangle(leftCenterX - btnSize / 2, mainCenterY - btnSize / 2 + btnSize, btnSize, btnSize);
 
-            // ABXY (右)
             int rightCenterX = innerX + innerW * 3 / 4;
-
             btnX.Bounds = new Rectangle(rightCenterX - btnSize / 2, mainCenterY - btnSize / 2 - btnSize, btnSize, btnSize);
             btnY.Bounds = new Rectangle(rightCenterX - btnSize / 2 - btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
             btnA.Bounds = new Rectangle(rightCenterX - btnSize / 2 + btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
             btnB.Bounds = new Rectangle(rightCenterX - btnSize / 2, mainCenterY - btnSize / 2 + btnSize, btnSize, btnSize);
 
-            // フォント設定
+            // フォント調整
             Font fontMain = new Font("Arial", Math.Max(10, btnSize / 3), FontStyle.Bold);
             Font fontSub = new Font("Arial", 9, FontStyle.Bold);
 
