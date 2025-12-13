@@ -1,63 +1,53 @@
 ﻿using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO.Ports;
 using System.Windows.Forms;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.IO;
 #nullable disable
 
 namespace SwitchRemoteGUI
 {
     public partial class Form1 : Form
     {
-        // ★設定必須項目
+        // ★設定必須項目：ポート番号
         string portName = "COM5";
 
         SerialPort? port;
 
         // --- Windows API ---
-        [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
-        [DllImport("user32.dll")] private static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
-        [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern int SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
         [DllImport("user32.dll")] public static extern bool ReleaseCapture();
 
-        private const int SW_RESTORE = 9;
-        private const int SW_MINIMIZE = 6;
-
+        // 状態管理
         bool _isReady = false;
-
-        // ★状態管理フラグ
         bool _isSolidBlack = false;
-        bool _isVertical = false;
 
-        // ★連射・送信制御用
+        // ★回転角度 (0, 90, 180, 270)
+        int _rotationAngle = 0;
+
+        // 連射・送信制御用
         System.Windows.Forms.Timer _repeatTimer;
         string _repeatingCmd = "";
-
-        // ★前回の送信時刻（連打防止用）
         DateTime _lastSendTime = DateTime.MinValue;
-        // ★最小送信間隔(ミリ秒)。これを下回る連打は無視する（マイコンのバッファ溢れ防止）
-        // マイコン側の処理速度に合わせて調整（通常100ms〜150ms）
-        private const int MIN_SEND_INTERVAL = 120;
+        private const int SEND_INTERVAL = 400;
 
-        // UIパーツ
-        Button? btnLayoutToggle;
-        Button? btnBgToggle;
-        Label? lblTitle;
+        // UIパーツ (自作の回転対応クラス)
+        RotatableButton? btnLayoutToggle;
+        RotatableButton? btnBgToggle;
+        RotatableLabel? lblTitle;
 
-        Button? btnObsShow, btnObsHide;
-        Button? btnZL, btnL, btnLR, btnR, btnZR;
-        Button? btnUp, btnLeft, btnDown, btnRight;
-        Button? btnX, btnY, btnB, btnA;
-        Button? btnMinus, btnHome, btnCap, btnPlus;
-        Button? btnL3, btnR3;
+        RotatableButton? btnZL, btnL, btnLR, btnR, btnZR;
+        RotatableButton? btnUp, btnLeft, btnDown, btnRight;
+        RotatableButton? btnX, btnY, btnB, btnA;
+        RotatableButton? btnMinus, btnHome, btnCap, btnPlus;
+        RotatableButton? btnL3, btnR3;
 
         private int borderSize = 5;
 
-        private readonly string LayoutFilePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "switch_layout.txt");
-
+        // 横モード時の基準サイズ
+        private const int BASE_W = 800;
+        private const int BASE_H = 400;
 
         public Form1()
         {
@@ -66,10 +56,8 @@ namespace SwitchRemoteGUI
             this.FormBorderStyle = FormBorderStyle.None;
             this.MinimumSize = new Size(300, 300);
 
-            // ★連射タイマー設定 
-            // マイコンの処理落ちを防ぐため、少し長め(150ms)に設定
             _repeatTimer = new System.Windows.Forms.Timer();
-            _repeatTimer.Interval = 400;
+            _repeatTimer.Interval = SEND_INTERVAL;
             _repeatTimer.Tick += RepeatTimer_Tick;
 
             SetTransparentMode();
@@ -82,52 +70,81 @@ namespace SwitchRemoteGUI
             ConnectPort();
             CreateUI();
 
-            this.Size = new Size(800, 400);
+            // 初期サイズ
+            this.Size = new Size(BASE_W, BASE_H);
 
             _isReady = true;
             UpdateLayout();
         }
 
-        // --- 連射処理 ---
         private void RepeatTimer_Tick(object? sender, EventArgs e)
         {
-            if (!string.IsNullOrEmpty(_repeatingCmd))
-            {
-                // 強制送信フラグを立てて送る（長押し中は間隔管理されているのでそのまま送る）
-                Send(_repeatingCmd, true);
-            }
+            if (!string.IsNullOrEmpty(_repeatingCmd)) Send(_repeatingCmd, true);
         }
 
-        // --- コマンド送信処理（改良版） ---
-        // force: trueなら間隔チェックを無視して送信（長押し連射用）
         void Send(string cmd, bool force = false)
         {
             if (port != null && port.IsOpen)
             {
-                // ★間隔チェック: 前回の送信から時間が経っていないなら、「送らない」
-                // これにより、マイコン側にデータが溜まるのを物理的に防ぐ
                 double msSinceLast = (DateTime.Now - _lastSendTime).TotalMilliseconds;
-                if (!force && msSinceLast < MIN_SEND_INTERVAL)
-                {
-                    // まだ早いので無視（これが「以前のキューを却下」の代わりになる）
-                    return;
-                }
+                if (!force && msSinceLast < SEND_INTERVAL) return;
 
                 try
                 {
-                    // 一応PC側のバッファもクリアしておく
                     port.DiscardOutBuffer();
-
                     port.Write(cmd);
-
-                    // 送信時刻を記録
                     _lastSendTime = DateTime.Now;
                 }
                 catch { }
             }
         }
 
-        // --- モード切り替え ---
+        void ClearBuffer()
+        {
+            if (port != null && port.IsOpen) try { port.DiscardOutBuffer(); } catch { }
+        }
+
+        // ★★★ 90度ずつ回転させる関数 ★★★
+        void RotateLayout()
+        {
+            // 90度ずつ加算 (0 -> 90 -> 180 -> 270 -> 0)
+            _rotationAngle = (_rotationAngle + 90) % 360;
+
+            if (_rotationAngle == 90 || _rotationAngle == 270)
+            {
+                // 縦長モード
+                this.Size = new Size(BASE_H, BASE_W);
+            }
+            else
+            {
+                // 横長モード
+                this.Size = new Size(BASE_W, BASE_H);
+            }
+
+            // ボタンのテキスト更新
+            if (btnLayoutToggle != null) btnLayoutToggle.Text = $"↻ {_rotationAngle}°";
+
+            UpdateLayout();
+        }
+
+        void ToggleBlackMode()
+        {
+            if (_isSolidBlack)
+            {
+                SetTransparentMode();
+                if (btnBgToggle != null) btnBgToggle.Text = "⚫ 透過";
+            }
+            else
+            {
+                SetSolidBlackMode();
+                if (btnBgToggle != null) btnBgToggle.Text = "⚫ 黒";
+            }
+            if (btnBgToggle != null)
+                btnBgToggle.BackColor = _isSolidBlack ? Color.FromArgb(100, 100, 100) : Color.FromArgb(70, 70, 70);
+
+            this.TopMost = true;
+        }
+
         void SetTransparentMode()
         {
             this.TransparencyKey = Color.Magenta;
@@ -146,72 +163,6 @@ namespace SwitchRemoteGUI
             this.Invalidate();
         }
 
-        void ToggleLayoutMode()
-        {
-            _isVertical = !_isVertical;
-            if (_isVertical)
-            {
-                this.Size = new Size(400, 800);
-                if (btnLayoutToggle != null) btnLayoutToggle.Text = "🔀 LAYOUT: 縦 (分割)";
-            }
-            else
-            {
-                this.Size = new Size(800, 400);
-                if (btnLayoutToggle != null) btnLayoutToggle.Text = "🔀 LAYOUT: 横 (全面)";
-            }
-            UpdateLayout();
-            WriteGameLayoutFile();
-        }
-
-        void ToggleBlackMode()
-        {
-            if (_isSolidBlack)
-            {
-                SetTransparentMode();
-                if (btnBgToggle != null) btnBgToggle.Text = "⚫ BG: 透過";
-            }
-            else
-            {
-                SetSolidBlackMode();
-                if (btnBgToggle != null) btnBgToggle.Text = "⚫ BG: 黒";
-            }
-            if (btnBgToggle != null)
-                btnBgToggle.BackColor = _isSolidBlack ? Color.FromArgb(100, 100, 100) : Color.FromArgb(70, 70, 70);
-
-            this.TopMost = true;
-        }
-
-        // --- AutoHotkey連携 ---
-        void WriteGameLayoutFile()
-        {
-            if (_isVertical)
-            {
-                int W = this.ClientSize.Width;
-                int H = this.ClientSize.Height;
-                int pad = borderSize;
-                int innerW = W - pad * 2;
-                int innerX = pad;
-                int innerY = pad;
-                int topBarH = 24;
-                int margin = 5;
-
-                int gameX = this.Location.X + innerX;
-                int gameY = this.Location.Y + innerY + topBarH + margin;
-                int gameW = innerW;
-                int gameH = (H / 2) - (topBarH + margin * 2);
-
-                string layoutData = $"{gameX} {gameY} {gameW} {gameH}";
-
-                try { File.WriteAllText(LayoutFilePath, layoutData); }
-                catch (Exception ex) { MessageBox.Show($"Error: {ex.Message}", "Error"); }
-            }
-            else
-            {
-                try { File.WriteAllText(LayoutFilePath, ""); } catch { }
-            }
-        }
-
-        // --- 描画・ウィンドウ処理 ---
         private void Form1_Paint(object sender, PaintEventArgs e)
         {
             Color frameColor = _isSolidBlack ? Color.DarkGray : Color.Black;
@@ -257,11 +208,10 @@ namespace SwitchRemoteGUI
             UpdateLayout();
         }
 
-        // --- UI作成 ---
         void CreateUI()
         {
-            lblTitle = new Label();
-            lblTitle.Text = ":::: Switch Controller ::::";
+            lblTitle = new RotatableLabel();
+            lblTitle.Text = ":: Switch Remote ::";
             lblTitle.TextAlign = ContentAlignment.MiddleCenter;
             lblTitle.BackColor = Color.FromArgb(50, 50, 50);
             lblTitle.ForeColor = Color.White;
@@ -269,18 +219,18 @@ namespace SwitchRemoteGUI
             lblTitle.MouseDown += TopBar_MouseDown;
             this.Controls.Add(lblTitle);
 
-            btnLayoutToggle = new Button();
-            btnLayoutToggle.Text = "🔀 LAYOUT: 横";
+            btnLayoutToggle = new RotatableButton();
+            btnLayoutToggle.Text = "↻ 0°";
             btnLayoutToggle.BackColor = Color.FromArgb(70, 70, 70);
             btnLayoutToggle.ForeColor = Color.White;
             btnLayoutToggle.FlatStyle = FlatStyle.Flat;
             btnLayoutToggle.FlatAppearance.BorderSize = 0;
             btnLayoutToggle.TabStop = false;
-            btnLayoutToggle.Click += (s, e) => ToggleLayoutMode();
+            btnLayoutToggle.Click += (s, e) => RotateLayout();
             this.Controls.Add(btnLayoutToggle);
 
-            btnBgToggle = new Button();
-            btnBgToggle.Text = "⚫ BG: 透過";
+            btnBgToggle = new RotatableButton();
+            btnBgToggle.Text = "⚫ 透過";
             btnBgToggle.BackColor = Color.FromArgb(70, 70, 70);
             btnBgToggle.ForeColor = Color.White;
             btnBgToggle.FlatStyle = FlatStyle.Flat;
@@ -289,24 +239,9 @@ namespace SwitchRemoteGUI
             btnBgToggle.Click += (s, e) => ToggleBlackMode();
             this.Controls.Add(btnBgToggle);
 
-            // OBS操作用 (制限なし)
-            Button MkControlBtn(string txt, string cmd, Color? bg = null)
+            RotatableButton MkGameBtn(string txt, string cmd, bool isRepeat, Color? bg = null)
             {
-                Button b = new Button();
-                b.Text = txt;
-                b.BackColor = bg ?? Color.White;
-                b.FlatStyle = FlatStyle.Flat;
-                b.FlatAppearance.BorderSize = 0;
-                b.TabStop = false;
-                if (cmd != "") b.Click += (s, e) => Send(cmd, true); // Controlは常に送る
-                this.Controls.Add(b);
-                return b;
-            }
-
-            // ゲーム用 (MouseDownで送信、連打制限あり)
-            Button MkGameBtn(string txt, string cmd, bool isRepeat, Color? bg = null)
-            {
-                Button b = new Button();
+                RotatableButton b = new RotatableButton();
                 b.Text = txt;
                 b.BackColor = bg ?? Color.White;
                 b.FlatStyle = FlatStyle.Flat;
@@ -316,14 +251,12 @@ namespace SwitchRemoteGUI
                 b.MouseDown += (s, e) => {
                     if (isRepeat)
                     {
-                        // 連射モード: 即時送信＆タイマー開始
                         _repeatingCmd = cmd;
-                        Send(cmd, true); // 初回は強制送信
+                        Send(cmd, true);
                         _repeatTimer.Start();
                     }
                     else
                     {
-                        // 単発モード: 制限付きで送信（連打しても間引かれる）
                         Send(cmd, false);
                     }
                 };
@@ -334,22 +267,13 @@ namespace SwitchRemoteGUI
                         _repeatTimer.Stop();
                         _repeatingCmd = "";
                     }
-                    // 離したときは何も送らない（送信を止めるだけでいい）
-                    // マイコンへの送信が止まれば、マイコンのバッファが尽き次第止まる
-                    // 今回は「送信制限」でバッファを枯渇させているので、これでOK
+                    ClearBuffer();
                 };
 
                 this.Controls.Add(b);
                 return b;
             }
 
-            // OBS
-            btnObsShow = MkControlBtn("📺 戻す", "", Color.LightSkyBlue);
-            btnObsShow.Click += (s, e) => ControlApp("obs", true);
-            btnObsHide = MkControlBtn("＿ 隠す", "", Color.LightGray);
-            btnObsHide.Click += (s, e) => ControlApp("obs", false);
-
-            // ゲームボタン
             btnZL = MkGameBtn("ZL", "e", false, Color.DarkGray);
             btnL = MkGameBtn("L", "q", false, Color.Gray);
             btnLR = MkGameBtn("LR", "qw", false, Color.Orange);
@@ -367,104 +291,123 @@ namespace SwitchRemoteGUI
             btnA = MkGameBtn("A", "z", false, Color.Cyan);
 
             btnMinus = MkGameBtn("-", "m", false, Color.LightGray);
-            btnHome = MkGameBtn("🏠", "h", false, Color.LightBlue);
-            btnCap = MkGameBtn("📷", "c", false, Color.Pink);
+            // ★ 文字表記に変更
+            btnHome = MkGameBtn("Home", "h", false, Color.LightBlue);
+            btnCap = MkGameBtn("Capture", "c", false, Color.Pink);
+
             btnPlus = MkGameBtn("+", "n", false, Color.LightGray);
 
             btnL3 = MkGameBtn("L3", "3", false, Color.Silver);
             btnR3 = MkGameBtn("R3", "4", false, Color.Silver);
         }
 
+        // ★★★ レイアウト計算（360度回転対応） ★★★
         void UpdateLayout()
         {
             if (!_isReady) return;
 
-            int W = this.ClientSize.Width;
-            int H = this.ClientSize.Height;
+            // 1. まず「0度（横モード 800x400）」の基準配置を計算
+            int W = BASE_W;
+            int H = BASE_H;
             int pad = borderSize;
             int innerW = W - pad * 2;
             int innerX = pad;
             int innerY = pad;
-
-            int stdH = 35;
-            int margin = 5;
             int topBarH = 24;
+            int margin = 5;
+            int stdH = 35;
+            int contentY = innerY + topBarH + margin;
 
-            // --- トップバー ---
+            var rects = new System.Collections.Generic.Dictionary<Control, Rectangle>();
+
+            // (A) トップバー
             int toggleW = (innerW - margin) / 4;
-            if (btnBgToggle != null) btnBgToggle.Bounds = new Rectangle(innerX + innerW - toggleW, innerY, toggleW, topBarH);
-            if (btnLayoutToggle != null) btnLayoutToggle.Bounds = new Rectangle(innerX + innerW - toggleW * 2 - margin, innerY, toggleW, topBarH);
-            if (lblTitle != null) lblTitle.Bounds = new Rectangle(innerX, innerY, innerW - toggleW * 2 - margin * 2, topBarH);
+            if (btnBgToggle != null) rects[btnBgToggle] = new Rectangle(innerX + innerW - toggleW, innerY, toggleW, topBarH);
+            if (btnLayoutToggle != null) rects[btnLayoutToggle] = new Rectangle(innerX + innerW - toggleW * 2 - margin, innerY, toggleW, topBarH);
+            if (lblTitle != null) rects[lblTitle] = new Rectangle(innerX, innerY, innerW - toggleW * 2 - margin * 2, topBarH);
 
-            int contentTop;
-            if (_isVertical) contentTop = innerY + (H / 2);
-            else contentTop = innerY + topBarH + margin;
-
-            int availH = H - pad - contentTop;
-
-            // 1. OBS
-            int yObs = contentTop;
-            if (btnObsShow != null) btnObsShow.Bounds = new Rectangle(innerX, yObs, (innerW - margin) / 2, stdH);
-            if (btnObsHide != null) btnObsHide.Bounds = new Rectangle(innerX + (innerW - margin) / 2 + margin, yObs, (innerW - margin) / 2, stdH);
-
-            // 2. ショルダー
-            int ySh = yObs + stdH + margin;
+            // (B) ショルダー
+            int ySh = contentY;
             int shW = (innerW - margin * 4) / 5;
-            if (btnZL != null) btnZL.Bounds = new Rectangle(innerX, ySh, shW, stdH);
-            if (btnL != null) btnL.Bounds = new Rectangle(innerX + shW + margin, ySh, shW, stdH);
-            if (btnLR != null) btnLR.Bounds = new Rectangle(innerX + (shW + margin) * 2, ySh, shW, stdH);
-            if (btnR != null) btnR.Bounds = new Rectangle(innerX + (shW + margin) * 3, ySh, shW, stdH);
-            if (btnZR != null) btnZR.Bounds = new Rectangle(innerX + (shW + margin) * 4, ySh, shW, stdH);
+            if (btnZL != null) rects[btnZL] = new Rectangle(innerX, ySh, shW, stdH);
+            if (btnL != null) rects[btnL] = new Rectangle(innerX + shW + margin, ySh, shW, stdH);
+            if (btnLR != null) rects[btnLR] = new Rectangle(innerX + (shW + margin) * 2, ySh, shW, stdH);
+            if (btnR != null) rects[btnR] = new Rectangle(innerX + (shW + margin) * 3, ySh, shW, stdH);
+            if (btnZR != null) rects[btnZR] = new Rectangle(innerX + (shW + margin) * 4, ySh, shW, stdH);
 
-            // 5. L3/R3
+            // (D) スティック
             int yStick = H - pad - stdH;
             int stickW = (innerW - margin) / 2;
-            int stickH = stdH;
+            if (btnL3 != null) rects[btnL3] = new Rectangle(innerX, yStick, stickW, stdH);
+            if (btnR3 != null) rects[btnR3] = new Rectangle(innerX + stickW + margin, yStick, stickW, stdH);
 
-            if (yStick < ySh + stdH + margin * 3)
-            {
-                stickH = Math.Max(20, (H - pad - ySh) / 3);
-                yStick = H - pad - stickH;
-            }
-
-            if (btnL3 != null) btnL3.Bounds = new Rectangle(innerX, yStick, stickW, stickH);
-            if (btnR3 != null) btnR3.Bounds = new Rectangle(innerX + stickW + margin, yStick, stickW, stickH);
-
-            // 4. システム
+            // (C) システム
             int ySys = yStick - margin - stdH;
             int sysW = (innerW - margin * 3) / 4;
-            if (btnMinus != null) btnMinus.Bounds = new Rectangle(innerX, ySys, sysW, stdH);
-            if (btnHome != null) btnHome.Bounds = new Rectangle(innerX + sysW + margin, ySys, sysW, stdH);
-            if (btnCap != null) btnCap.Bounds = new Rectangle(innerX + (sysW + margin) * 2, ySys, sysW, stdH);
-            if (btnPlus != null) btnPlus.Bounds = new Rectangle(innerX + (sysW + margin) * 3, ySys, sysW, stdH);
+            if (btnMinus != null) rects[btnMinus] = new Rectangle(innerX, ySys, sysW, stdH);
+            if (btnHome != null) rects[btnHome] = new Rectangle(innerX + sysW + margin, ySys, sysW, stdH);
+            if (btnCap != null) rects[btnCap] = new Rectangle(innerX + (sysW + margin) * 2, ySys, sysW, stdH);
+            if (btnPlus != null) rects[btnPlus] = new Rectangle(innerX + (sysW + margin) * 3, ySys, sysW, stdH);
 
-            // 3. 中央
+            // (E) メインエリア
             int yMainTop = ySh + stdH + margin;
             int yMainBottom = ySys - margin;
             int mainH = yMainBottom - yMainTop;
-            if (mainH < 50) mainH = 50;
-
             int btnSize = Math.Min((innerW / 2 - margin) / 3, mainH / 3);
             btnSize = Math.Max(20, btnSize);
 
+            // 左手
             int leftCenterX = innerX + innerW / 4;
             int mainCenterY = yMainTop + mainH / 2;
-            if (btnUp != null) btnUp.Bounds = new Rectangle(leftCenterX - btnSize / 2, mainCenterY - btnSize / 2 - btnSize, btnSize, btnSize);
-            if (btnLeft != null) btnLeft.Bounds = new Rectangle(leftCenterX - btnSize / 2 - btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
-            if (btnRight != null) btnRight.Bounds = new Rectangle(leftCenterX - btnSize / 2 + btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
-            if (btnDown != null) btnDown.Bounds = new Rectangle(leftCenterX - btnSize / 2, mainCenterY - btnSize / 2 + btnSize, btnSize, btnSize);
+            if (btnUp != null) rects[btnUp] = new Rectangle(leftCenterX - btnSize / 2, mainCenterY - btnSize / 2 - btnSize, btnSize, btnSize);
+            if (btnLeft != null) rects[btnLeft] = new Rectangle(leftCenterX - btnSize / 2 - btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
+            if (btnRight != null) rects[btnRight] = new Rectangle(leftCenterX - btnSize / 2 + btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
+            if (btnDown != null) rects[btnDown] = new Rectangle(leftCenterX - btnSize / 2, mainCenterY - btnSize / 2 + btnSize, btnSize, btnSize);
 
+            // 右手
             int rightCenterX = innerX + innerW * 3 / 4;
-            if (btnX != null) btnX.Bounds = new Rectangle(rightCenterX - btnSize / 2, mainCenterY - btnSize / 2 - btnSize, btnSize, btnSize);
-            if (btnY != null) btnY.Bounds = new Rectangle(rightCenterX - btnSize / 2 - btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
-            if (btnA != null) btnA.Bounds = new Rectangle(rightCenterX - btnSize / 2 + btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
-            if (btnB != null) btnB.Bounds = new Rectangle(rightCenterX - btnSize / 2, mainCenterY - btnSize / 2 + btnSize, btnSize, btnSize);
+            if (btnX != null) rects[btnX] = new Rectangle(rightCenterX - btnSize / 2, mainCenterY - btnSize / 2 - btnSize, btnSize, btnSize);
+            if (btnY != null) rects[btnY] = new Rectangle(rightCenterX - btnSize / 2 - btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
+            if (btnA != null) rects[btnA] = new Rectangle(rightCenterX - btnSize / 2 + btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
+            if (btnB != null) rects[btnB] = new Rectangle(rightCenterX - btnSize / 2, mainCenterY - btnSize / 2 + btnSize, btnSize, btnSize);
 
+            // ----------------------------------------------------
+            // 2. 角度に応じた座標変換
+            // ----------------------------------------------------
             Font fontMain = new Font("Arial", Math.Max(10, btnSize / 3), FontStyle.Bold);
             Font fontSub = new Font("Arial", 9, FontStyle.Bold);
 
-            foreach (Control c in this.Controls)
+            foreach (var kvp in rects)
             {
+                Control c = kvp.Key;
+                Rectangle r = kvp.Value;
+                Rectangle newRect = r;
+
+                // 回転情報をセット（文字回転用）
+                if (c is RotatableButton rb) rb.RotationAngle = _rotationAngle;
+                if (c is RotatableLabel rl) rl.RotationAngle = _rotationAngle;
+
+                switch (_rotationAngle)
+                {
+                    case 90:
+                        // 時計回り90度: (x, y) -> (BASE_H - y - h, x)
+                        newRect = new Rectangle(BASE_H - r.Y - r.Height, r.X, r.Height, r.Width);
+                        break;
+                    case 180:
+                        // 180度: (x, y) -> (BASE_W - x - w, BASE_H - y - h)
+                        newRect = new Rectangle(BASE_W - r.X - r.Width, BASE_H - r.Y - r.Height, r.Width, r.Height);
+                        break;
+                    case 270:
+                        // 時計回り270度: (x, y) -> (y, BASE_W - x - w)
+                        newRect = new Rectangle(r.Y, BASE_W - r.X - r.Width, r.Height, r.Width);
+                        break;
+                    default: // 0度
+                        newRect = r;
+                        break;
+                }
+
+                c.Bounds = newRect;
+
                 if (c is Button)
                 {
                     bool isMain = (c == btnUp || c == btnLeft || c == btnRight || c == btnDown ||
@@ -510,18 +453,82 @@ namespace SwitchRemoteGUI
         {
             try { port = new SerialPort(portName, 9600); port.Open(); } catch { }
         }
+    }
 
-        void ControlApp(string keyword, bool show)
+    // ★★★ 文字回転対応ボタン ★★★
+    public class RotatableButton : Button
+    {
+        public int RotationAngle { get; set; } = 0;
+
+        protected override void OnPaint(PaintEventArgs pevent)
         {
-            Process[] processList = Process.GetProcesses();
-            foreach (Process p in processList)
+            Graphics g = pevent.Graphics;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+
+            using (Brush bgBrush = new SolidBrush(this.BackColor))
             {
-                if (!string.IsNullOrEmpty(p.MainWindowTitle) &&
-                   (p.ProcessName.ToLower().Contains(keyword) || p.MainWindowTitle.ToLower().Contains(keyword)))
+                g.FillRectangle(bgBrush, this.ClientRectangle);
+            }
+
+            if (!string.IsNullOrEmpty(this.Text))
+            {
+                StringFormat sf = new StringFormat();
+                sf.Alignment = StringAlignment.Center;
+                sf.LineAlignment = StringAlignment.Center;
+
+                using (Brush textBrush = new SolidBrush(this.ForeColor))
                 {
-                    if (show) { if (IsIconic(p.MainWindowHandle)) ShowWindowAsync(p.MainWindowHandle, SW_RESTORE); SetForegroundWindow(p.MainWindowHandle); }
-                    else ShowWindowAsync(p.MainWindowHandle, SW_MINIMIZE);
-                    return;
+                    if (RotationAngle != 0)
+                    {
+                        // 中心を基準に回転 (時計回り)
+                        g.TranslateTransform(this.Width / 2, this.Height / 2);
+                        g.RotateTransform(RotationAngle);
+                        g.DrawString(this.Text, this.Font, textBrush, 0, 0, sf);
+                        g.ResetTransform();
+                    }
+                    else
+                    {
+                        g.DrawString(this.Text, this.Font, textBrush, this.ClientRectangle, sf);
+                    }
+                }
+            }
+        }
+    }
+
+    // ★★★ 文字回転対応ラベル ★★★
+    public class RotatableLabel : Label
+    {
+        public int RotationAngle { get; set; } = 0;
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+
+            using (Brush bgBrush = new SolidBrush(this.BackColor))
+            {
+                g.FillRectangle(bgBrush, this.ClientRectangle);
+            }
+
+            if (!string.IsNullOrEmpty(this.Text))
+            {
+                StringFormat sf = new StringFormat();
+                sf.Alignment = StringAlignment.Center;
+                sf.LineAlignment = StringAlignment.Center;
+
+                using (Brush textBrush = new SolidBrush(this.ForeColor))
+                {
+                    if (RotationAngle != 0)
+                    {
+                        g.TranslateTransform(this.Width / 2, this.Height / 2);
+                        g.RotateTransform(RotationAngle);
+                        g.DrawString(this.Text, this.Font, textBrush, 0, 0, sf);
+                        g.ResetTransform();
+                    }
+                    else
+                    {
+                        g.DrawString(this.Text, this.Font, textBrush, this.ClientRectangle, sf);
+                    }
                 }
             }
         }
