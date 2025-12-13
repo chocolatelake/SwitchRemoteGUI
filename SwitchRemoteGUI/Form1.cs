@@ -31,6 +31,9 @@ namespace SwitchRemoteGUI
         bool _isSolidBlack = false;
         int _rotationAngle = 0;
 
+        // ★追加: ホールド(連射)モード管理フラグ (初期値: ON = 長押し可能)
+        bool _isHoldMode = true;
+
         // 連射・送信制御
         System.Windows.Forms.Timer _repeatTimer;
         string _repeatingCmd = "";
@@ -41,6 +44,9 @@ namespace SwitchRemoteGUI
         RotatableButton? btnLayoutToggle;
         RotatableButton? btnBgToggle;
         RotatableLabel? lblTitle;
+
+        // ★追加: ホールド切替ボタン
+        RotatableButton? btnHoldToggle;
 
         RotatableButton? btnObsShow, btnObsHide;
         RotatableButton? btnZL, btnL, btnLR, btnR, btnZR;
@@ -59,6 +65,7 @@ namespace SwitchRemoteGUI
             InitializeComponent();
             this.TopMost = true;
             this.FormBorderStyle = FormBorderStyle.None;
+            this.DoubleBuffered = true;
             this.MinimumSize = new Size(200, 100);
 
             _repeatTimer = new System.Windows.Forms.Timer();
@@ -90,17 +97,31 @@ namespace SwitchRemoteGUI
         {
             if (port != null && port.IsOpen)
             {
+                // コマンド回転ロジック
+                string finalCmd = RotateCommand(cmd);
+
                 double msSinceLast = (DateTime.Now - _lastSendTime).TotalMilliseconds;
                 if (!force && msSinceLast < SEND_INTERVAL) return;
 
                 try
                 {
                     port.DiscardOutBuffer();
-                    port.Write(cmd);
+                    port.Write(finalCmd);
                     _lastSendTime = DateTime.Now;
                 }
                 catch { }
             }
+        }
+
+        // コマンド回転
+        string RotateCommand(string cmd)
+        {
+            if (_rotationAngle == 0) return cmd;
+            if (cmd == "I") { if (_rotationAngle == 90) return "J"; if (_rotationAngle == 180) return "K"; if (_rotationAngle == 270) return "L"; }
+            if (cmd == "J") { if (_rotationAngle == 90) return "K"; if (_rotationAngle == 180) return "L"; if (_rotationAngle == 270) return "I"; }
+            if (cmd == "K") { if (_rotationAngle == 90) return "L"; if (_rotationAngle == 180) return "I"; if (_rotationAngle == 270) return "J"; }
+            if (cmd == "L") { if (_rotationAngle == 90) return "I"; if (_rotationAngle == 180) return "J"; if (_rotationAngle == 270) return "K"; }
+            return cmd;
         }
 
         void ClearBuffer()
@@ -140,20 +161,30 @@ namespace SwitchRemoteGUI
 
         void ToggleBlackMode()
         {
-            if (_isSolidBlack)
-            {
-                SetTransparentMode();
-                if (btnBgToggle != null) btnBgToggle.Text = "透過";
-            }
-            else
-            {
-                SetSolidBlackMode();
-                if (btnBgToggle != null) btnBgToggle.Text = "黒";
-            }
-            if (btnBgToggle != null)
-                btnBgToggle.BackColor = _isSolidBlack ? Color.FromArgb(100, 100, 100) : Color.FromArgb(70, 70, 70);
-
+            if (_isSolidBlack) { SetTransparentMode(); if (btnBgToggle != null) btnBgToggle.Text = "透過"; }
+            else { SetSolidBlackMode(); if (btnBgToggle != null) btnBgToggle.Text = "黒"; }
+            if (btnBgToggle != null) btnBgToggle.BackColor = _isSolidBlack ? Color.FromArgb(100, 100, 100) : Color.FromArgb(70, 70, 70);
             this.TopMost = true;
+        }
+
+        // ★追加: ホールドモード切替処理
+        void ToggleHoldMode()
+        {
+            _isHoldMode = !_isHoldMode;
+            if (btnHoldToggle != null)
+            {
+                // 表示切り替え
+                if (_isHoldMode)
+                {
+                    btnHoldToggle.Text = "Hold: ON";
+                    btnHoldToggle.BackColor = Color.LightGreen; // わかりやすく緑に
+                }
+                else
+                {
+                    btnHoldToggle.Text = "Hold: OFF";
+                    btnHoldToggle.BackColor = Color.LightSalmon; // OFFは赤っぽく
+                }
+            }
         }
 
         void SetTransparentMode()
@@ -188,7 +219,6 @@ namespace SwitchRemoteGUI
         {
             const int WM_NCHITTEST = 0x84;
             base.WndProc(ref m);
-
             if (m.Msg == WM_NCHITTEST)
             {
                 Point pos = this.PointToClient(new Point(m.LParam.ToInt32()));
@@ -205,11 +235,7 @@ namespace SwitchRemoteGUI
 
         private void TopBar_MouseDown(object sender, MouseEventArgs e)
         {
-            if (e.Button == MouseButtons.Left)
-            {
-                ReleaseCapture();
-                SendMessage(Handle, 0xA1, 0x2, 0);
-            }
+            if (e.Button == MouseButtons.Left) { ReleaseCapture(); SendMessage(Handle, 0xA1, 0x2, 0); }
         }
 
         protected override void OnResize(EventArgs e)
@@ -263,6 +289,7 @@ namespace SwitchRemoteGUI
                 return b;
             }
 
+            // ゲームボタン生成（ホールドモード対応）
             RotatableButton MkGameBtn(string txt, string cmd, bool isRepeat, Color? bg = null)
             {
                 RotatableButton b = new RotatableButton();
@@ -273,20 +300,51 @@ namespace SwitchRemoteGUI
                 b.TabStop = false;
 
                 b.MouseDown += (s, e) => {
-                    if (isRepeat) { _repeatingCmd = cmd; Send(cmd, true); _repeatTimer.Start(); }
-                    else { Send(cmd, false); }
+                    // ★修正: _isHoldModeがONなら全ボタン連射(ホールド)有効。OFFなら全ボタン単発。
+                    // 元の isRepeat 引数はここでは無視して、モード設定を優先します。
+                    bool doRepeat = _isHoldMode;
+
+                    if (doRepeat)
+                    {
+                        _repeatingCmd = cmd;
+                        Send(cmd, true);
+                        _repeatTimer.Start();
+                    }
+                    else
+                    {
+                        Send(cmd, false);
+                    }
                 };
+
                 b.MouseUp += (s, e) => {
-                    if (isRepeat) { _repeatTimer.Stop(); _repeatingCmd = ""; }
+                    // 連射モードならタイマーを止める
+                    if (_isHoldMode)
+                    {
+                        _repeatTimer.Stop();
+                        _repeatingCmd = "";
+                    }
                     ClearBuffer();
                 };
                 this.Controls.Add(b);
                 return b;
             }
 
+            // ★追加: Hold切替ボタン
+            btnHoldToggle = new RotatableButton();
+            btnHoldToggle.Text = "Hold: ON"; // 初期状態
+            btnHoldToggle.BackColor = Color.LightGreen;
+            btnHoldToggle.ForeColor = Color.Black;
+            btnHoldToggle.FlatStyle = FlatStyle.Flat;
+            btnHoldToggle.FlatAppearance.BorderSize = 0;
+            btnHoldToggle.TabStop = false;
+            btnHoldToggle.Click += (s, e) => ToggleHoldMode();
+            this.Controls.Add(btnHoldToggle);
+
+            // OBSボタン (既存)
             btnObsShow = MkControlBtn("📺 OBS", "obs", true, Color.LightSkyBlue);
             btnObsHide = MkControlBtn("Hide", "obs", false, Color.LightGray);
 
+            // ゲームボタン
             btnZL = MkGameBtn("ZL", "e", false, Color.DarkGray);
             btnL = MkGameBtn("L", "q", false, Color.Gray);
             btnLR = MkGameBtn("LR", "qw", false, Color.Orange);
@@ -316,27 +374,17 @@ namespace SwitchRemoteGUI
         {
             if (!_isReady) return;
 
-            int logicW, logicH;
-            if (_rotationAngle == 90 || _rotationAngle == 270)
-            {
-                logicW = this.ClientSize.Height;
-                logicH = this.ClientSize.Width;
-            }
-            else
-            {
-                logicW = this.ClientSize.Width;
-                logicH = this.ClientSize.Height;
-            }
-
+            int W = this.ClientSize.Width;
+            int H = this.ClientSize.Height;
             int pad = borderSize;
-            int innerW = logicW - pad * 2;
+            int innerW = W - pad * 2;
             int innerX = pad;
             int innerY = pad;
             int topBarH = 24;
             int margin = 5;
 
             int contentY = innerY + topBarH + margin;
-            int contentH = logicH - pad - contentY;
+            int contentH = H - pad - contentY;
 
             var rects = new System.Collections.Generic.Dictionary<Control, Rectangle>();
 
@@ -345,63 +393,133 @@ namespace SwitchRemoteGUI
             if (btnLayoutToggle != null) rects[btnLayoutToggle] = new Rectangle(innerX + innerW - toggleW * 2 - margin, innerY, toggleW, topBarH);
             if (lblTitle != null) rects[lblTitle] = new Rectangle(innerX, innerY, innerW - toggleW * 2 - margin * 2, topBarH);
 
-            int obsH = (int)(contentH * 0.10);
-            int shoulderH = (int)(contentH * 0.12);
-            int stickH = (int)(contentH * 0.12);
-            int systemH = (int)(contentH * 0.10);
+            int btnBaseSize = 30;
 
-            if (obsH < 25) obsH = 25;
-            if (shoulderH < 30) shoulderH = 30;
-            if (stickH < 30) stickH = 30;
-            if (systemH < 30) systemH = 30;
+            // ★★★ 縦レイアウト (90度 / 270度) ★★★
+            if (_rotationAngle == 90 || _rotationAngle == 270)
+            {
+                int rowH = contentH / 14;
+                int y = contentY;
 
-            int mainH = contentH - obsH - shoulderH - stickH - systemH - (margin * 4);
-            if (mainH < 80) mainH = 80;
+                // 1. OBS & Hold (3ボタンに分割)
+                int obsH = Math.Max(30, rowH);
+                int btnW = (innerW - margin * 2) / 3;
+                if (btnObsShow != null) rects[btnObsShow] = new Rectangle(innerX, y, btnW, obsH);
+                if (btnObsHide != null) rects[btnObsHide] = new Rectangle(innerX + btnW + margin, y, btnW, obsH);
+                if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX + (btnW + margin) * 2, y, btnW, obsH);
+                y += obsH + margin;
 
-            int yObs = contentY;
-            int ySh = yObs + obsH + margin;
-            int yMain = ySh + shoulderH + margin;
-            int ySys = yMain + mainH + margin;
-            int yStick = ySys + systemH + margin;
+                // 2. ショルダー
+                int shH = Math.Max(40, rowH * 2);
+                int shW = (innerW - margin * 4) / 5;
+                if (btnZL != null) rects[btnZL] = new Rectangle(innerX, y, shW, shH);
+                if (btnL != null) rects[btnL] = new Rectangle(innerX + shW + margin, y, shW, shH);
+                if (btnLR != null) rects[btnLR] = new Rectangle(innerX + (shW + margin) * 2, y, shW, shH);
+                if (btnR != null) rects[btnR] = new Rectangle(innerX + (shW + margin) * 3, y, shW, shH);
+                if (btnZR != null) rects[btnZR] = new Rectangle(innerX + (shW + margin) * 4, y, shW, shH);
+                y += shH + margin;
 
-            if (btnObsShow != null) rects[btnObsShow] = new Rectangle(innerX, yObs, (innerW - margin) / 2, obsH);
-            if (btnObsHide != null) rects[btnObsHide] = new Rectangle(innerX + (innerW - margin) / 2 + margin, yObs, (innerW - margin) / 2, obsH);
+                // 3. L3/R3
+                int stickH = Math.Max(30, rowH);
+                int stickW = (innerW - margin) / 2;
+                if (btnL3 != null) rects[btnL3] = new Rectangle(innerX, y, stickW, stickH);
+                if (btnR3 != null) rects[btnR3] = new Rectangle(innerX + stickW + margin, y, stickW, stickH);
+                y += stickH + margin;
 
-            int shW = (innerW - margin * 4) / 5;
-            if (btnZL != null) rects[btnZL] = new Rectangle(innerX, ySh, shW, shoulderH);
-            if (btnL != null) rects[btnL] = new Rectangle(innerX + shW + margin, ySh, shW, shoulderH);
-            if (btnLR != null) rects[btnLR] = new Rectangle(innerX + (shW + margin) * 2, ySh, shW, shoulderH);
-            if (btnR != null) rects[btnR] = new Rectangle(innerX + (shW + margin) * 3, ySh, shW, shoulderH);
-            if (btnZR != null) rects[btnZR] = new Rectangle(innerX + (shW + margin) * 4, ySh, shW, shoulderH);
+                // 4. 十字キー
+                int dpadH = Math.Max(100, rowH * 3);
+                btnBaseSize = Math.Min(innerW / 3, dpadH / 3);
+                int centerX = innerX + innerW / 2;
+                int centerY = y + dpadH / 2;
+                if (btnUp != null) rects[btnUp] = new Rectangle(centerX - btnBaseSize / 2, centerY - btnBaseSize / 2 - btnBaseSize, btnBaseSize, btnBaseSize);
+                if (btnLeft != null) rects[btnLeft] = new Rectangle(centerX - btnBaseSize / 2 - btnBaseSize, centerY - btnBaseSize / 2, btnBaseSize, btnBaseSize);
+                if (btnRight != null) rects[btnRight] = new Rectangle(centerX - btnBaseSize / 2 + btnBaseSize, centerY - btnBaseSize / 2, btnBaseSize, btnBaseSize);
+                if (btnDown != null) rects[btnDown] = new Rectangle(centerX - btnBaseSize / 2, centerY - btnBaseSize / 2 + btnBaseSize, btnBaseSize, btnBaseSize);
+                y += dpadH + margin;
 
-            int leftAreaW = innerW / 2;
-            int rightAreaW = innerW - leftAreaW;
-            int btnSize = Math.Min(mainH / 3, (leftAreaW - margin * 2) / 3);
+                // 5. システム
+                int sysH = Math.Max(30, rowH);
+                int sysW = (innerW - margin * 3) / 4;
+                if (btnMinus != null) rects[btnMinus] = new Rectangle(innerX, y, sysW, sysH);
+                if (btnHome != null) rects[btnHome] = new Rectangle(innerX + sysW + margin, y, sysW, sysH);
+                if (btnCap != null) rects[btnCap] = new Rectangle(innerX + (sysW + margin) * 2, y, sysW, sysH);
+                if (btnPlus != null) rects[btnPlus] = new Rectangle(innerX + (sysW + margin) * 3, y, sysW, sysH);
+                y += sysH + margin;
 
-            int leftCenterX = innerX + leftAreaW / 2;
-            int mainCenterY = yMain + mainH / 2;
-            if (btnUp != null) rects[btnUp] = new Rectangle(leftCenterX - btnSize / 2, mainCenterY - btnSize / 2 - btnSize, btnSize, btnSize);
-            if (btnLeft != null) rects[btnLeft] = new Rectangle(leftCenterX - btnSize / 2 - btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
-            if (btnRight != null) rects[btnRight] = new Rectangle(leftCenterX - btnSize / 2 + btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
-            if (btnDown != null) rects[btnDown] = new Rectangle(leftCenterX - btnSize / 2, mainCenterY - btnSize / 2 + btnSize, btnSize, btnSize);
+                // 6. ABXY
+                int abxyH = dpadH;
+                centerY = y + abxyH / 2;
+                if (btnX != null) rects[btnX] = new Rectangle(centerX - btnBaseSize / 2, centerY - btnBaseSize / 2 - btnBaseSize, btnBaseSize, btnBaseSize);
+                if (btnY != null) rects[btnY] = new Rectangle(centerX - btnBaseSize / 2 - btnBaseSize, centerY - btnBaseSize / 2, btnBaseSize, btnBaseSize);
+                if (btnA != null) rects[btnA] = new Rectangle(centerX - btnBaseSize / 2 + btnBaseSize, centerY - btnBaseSize / 2, btnBaseSize, btnBaseSize);
+                if (btnB != null) rects[btnB] = new Rectangle(centerX - btnBaseSize / 2, centerY - btnBaseSize / 2 + btnBaseSize, btnBaseSize, btnBaseSize);
+            }
+            // ★★★ 横レイアウト (0度 / 180度) ★★★
+            else
+            {
+                int obsH = (int)(contentH * 0.10);
+                int shoulderH = (int)(contentH * 0.12);
+                int stickH = (int)(contentH * 0.12);
+                int systemH = (int)(contentH * 0.10);
 
-            int rightCenterX = innerX + leftAreaW + rightAreaW / 2;
-            if (btnX != null) rects[btnX] = new Rectangle(rightCenterX - btnSize / 2, mainCenterY - btnSize / 2 - btnSize, btnSize, btnSize);
-            if (btnY != null) rects[btnY] = new Rectangle(rightCenterX - btnSize / 2 - btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
-            if (btnA != null) rects[btnA] = new Rectangle(rightCenterX - btnSize / 2 + btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
-            if (btnB != null) rects[btnB] = new Rectangle(rightCenterX - btnSize / 2, mainCenterY - btnSize / 2 + btnSize, btnSize, btnSize);
+                if (obsH < 25) obsH = 25;
+                if (shoulderH < 30) shoulderH = 30;
+                if (stickH < 30) stickH = 30;
+                if (systemH < 30) systemH = 30;
 
-            int sysW = (innerW - margin * 3) / 4;
-            if (btnMinus != null) rects[btnMinus] = new Rectangle(innerX, ySys, sysW, systemH);
-            if (btnHome != null) rects[btnHome] = new Rectangle(innerX + sysW + margin, ySys, sysW, systemH);
-            if (btnCap != null) rects[btnCap] = new Rectangle(innerX + (sysW + margin) * 2, ySys, sysW, systemH);
-            if (btnPlus != null) rects[btnPlus] = new Rectangle(innerX + (sysW + margin) * 3, ySys, sysW, systemH);
+                int mainH = contentH - obsH - shoulderH - stickH - systemH - (margin * 4);
+                if (mainH < 80) mainH = 80;
 
-            int stickW = (innerW - margin) / 2;
-            if (btnL3 != null) rects[btnL3] = new Rectangle(innerX, yStick, stickW, stickH);
-            if (btnR3 != null) rects[btnR3] = new Rectangle(innerX + stickW + margin, yStick, stickW, stickH);
+                int yObs = contentY;
+                int ySh = yObs + obsH + margin;
+                int yMain = ySh + shoulderH + margin;
+                int ySys = yMain + mainH + margin;
+                int yStick = ySys + systemH + margin;
 
-            float fontSize = Math.Max(8, btnSize / 3.0f);
+                // OBS & Hold (3ボタン)
+                int btnW = (innerW - margin * 2) / 3;
+                if (btnObsShow != null) rects[btnObsShow] = new Rectangle(innerX, yObs, btnW, obsH);
+                if (btnObsHide != null) rects[btnObsHide] = new Rectangle(innerX + btnW + margin, yObs, btnW, obsH);
+                if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX + (btnW + margin) * 2, yObs, btnW, obsH);
+
+                // ショルダー
+                int shW = (innerW - margin * 4) / 5;
+                if (btnZL != null) rects[btnZL] = new Rectangle(innerX, ySh, shW, shoulderH);
+                if (btnL != null) rects[btnL] = new Rectangle(innerX + shW + margin, ySh, shW, shoulderH);
+                if (btnLR != null) rects[btnLR] = new Rectangle(innerX + (shW + margin) * 2, ySh, shW, shoulderH);
+                if (btnR != null) rects[btnR] = new Rectangle(innerX + (shW + margin) * 3, ySh, shW, shoulderH);
+                if (btnZR != null) rects[btnZR] = new Rectangle(innerX + (shW + margin) * 4, ySh, shW, shoulderH);
+
+                // メイン
+                int leftAreaW = innerW / 2;
+                int rightAreaW = innerW - leftAreaW;
+                btnBaseSize = Math.Min(mainH / 3, (leftAreaW - margin * 2) / 3);
+
+                int leftCenterX = innerX + leftAreaW / 2;
+                int mainCenterY = yMain + mainH / 2;
+                if (btnUp != null) rects[btnUp] = new Rectangle(leftCenterX - btnBaseSize / 2, mainCenterY - btnBaseSize / 2 - btnBaseSize, btnBaseSize, btnBaseSize);
+                if (btnLeft != null) rects[btnLeft] = new Rectangle(leftCenterX - btnBaseSize / 2 - btnBaseSize, mainCenterY - btnBaseSize / 2, btnBaseSize, btnBaseSize);
+                if (btnRight != null) rects[btnRight] = new Rectangle(leftCenterX - btnBaseSize / 2 + btnBaseSize, mainCenterY - btnBaseSize / 2, btnBaseSize, btnBaseSize);
+                if (btnDown != null) rects[btnDown] = new Rectangle(leftCenterX - btnBaseSize / 2, mainCenterY - btnBaseSize / 2 + btnBaseSize, btnBaseSize, btnBaseSize);
+
+                int rightCenterX = innerX + leftAreaW + rightAreaW / 2;
+                if (btnX != null) rects[btnX] = new Rectangle(rightCenterX - btnBaseSize / 2, mainCenterY - btnBaseSize / 2 - btnBaseSize, btnBaseSize, btnBaseSize);
+                if (btnY != null) rects[btnY] = new Rectangle(rightCenterX - btnBaseSize / 2 - btnBaseSize, mainCenterY - btnBaseSize / 2, btnBaseSize, btnBaseSize);
+                if (btnA != null) rects[btnA] = new Rectangle(rightCenterX - btnBaseSize / 2 + btnBaseSize, mainCenterY - btnBaseSize / 2, btnBaseSize, btnBaseSize);
+                if (btnB != null) rects[btnB] = new Rectangle(rightCenterX - btnBaseSize / 2, mainCenterY - btnBaseSize / 2 + btnBaseSize, btnBaseSize, btnBaseSize);
+
+                int sysW = (innerW - margin * 3) / 4;
+                if (btnMinus != null) rects[btnMinus] = new Rectangle(innerX, ySys, sysW, systemH);
+                if (btnHome != null) rects[btnHome] = new Rectangle(innerX + sysW + margin, ySys, sysW, systemH);
+                if (btnCap != null) rects[btnCap] = new Rectangle(innerX + (sysW + margin) * 2, ySys, sysW, systemH);
+                if (btnPlus != null) rects[btnPlus] = new Rectangle(innerX + (sysW + margin) * 3, ySys, sysW, systemH);
+
+                int stickW = (innerW - margin) / 2;
+                if (btnL3 != null) rects[btnL3] = new Rectangle(innerX, yStick, stickW, stickH);
+                if (btnR3 != null) rects[btnR3] = new Rectangle(innerX + stickW + margin, yStick, stickW, stickH);
+            }
+
+            float fontSize = Math.Max(8, btnBaseSize / 2.5f);
             Font fontMain = new Font("Arial", fontSize, FontStyle.Bold);
             Font fontSub = new Font("Arial", Math.Max(8, fontSize * 0.8f), FontStyle.Bold);
 
@@ -409,19 +527,16 @@ namespace SwitchRemoteGUI
             {
                 Control c = kvp.Key;
                 Rectangle r = kvp.Value;
-                Rectangle newRect = r;
 
                 if (c is RotatableButton rb) rb.RotationAngle = _rotationAngle;
                 if (c is RotatableLabel rl) rl.RotationAngle = _rotationAngle;
 
-                switch (_rotationAngle)
+                // 180度, 270度 は反転
+                if (_rotationAngle == 180 || _rotationAngle == 270)
                 {
-                    case 90: newRect = new Rectangle(logicH - r.Y - r.Height, r.X, r.Height, r.Width); break;
-                    case 180: newRect = new Rectangle(logicW - r.X - r.Width, logicH - r.Y - r.Height, r.Width, r.Height); break;
-                    case 270: newRect = new Rectangle(r.Y, logicW - r.X - r.Width, r.Height, r.Width); break;
-                    default: newRect = r; break;
+                    r = new Rectangle(W - r.X - r.Width, H - r.Y - r.Height, r.Width, r.Height);
                 }
-                c.Bounds = newRect;
+                c.Bounds = r;
 
                 if (c is Button)
                 {
@@ -435,11 +550,7 @@ namespace SwitchRemoteGUI
 
         private void Form1_KeyDown(object sender, KeyEventArgs e)
         {
-            switch (e.KeyCode)
-            {
-                case Keys.Z: Send("z"); break;
-                case Keys.X: Send("x"); break;
-            }
+            switch (e.KeyCode) { case Keys.Z: Send("z"); break; case Keys.X: Send("x"); break; }
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)
@@ -448,86 +559,43 @@ namespace SwitchRemoteGUI
             base.OnFormClosed(e);
         }
 
-        void ConnectPort()
-        {
-            try { port = new SerialPort(portName, 9600); port.Open(); } catch { }
-        }
+        void ConnectPort() { try { port = new SerialPort(portName, 9600); port.Open(); } catch { } }
     }
 
-    // ★★★ 完全に形を切り抜くボタン（四角い背景が出ない） ★★★
+    // ボタンクラス（変更なし）
     public class RotatableButton : Button
     {
         public int RotationAngle { get; set; } = 0;
-
-        // リサイズ時などにリージョンを再計算
-        protected override void OnResize(EventArgs e)
+        public RotatableButton()
         {
-            base.OnResize(e);
-            UpdateShape();
+            this.SetStyle(ControlStyles.SupportsTransparentBackColor, true);
+            this.SetStyle(ControlStyles.Opaque, true);
+            this.SetStyle(ControlStyles.ResizeRedraw, true);
+            this.BackColor = Color.Transparent;
         }
-
-        // 形を更新するメソッド
+        protected override CreateParams CreateParams { get { CreateParams cp = base.CreateParams; cp.ExStyle |= 0x20; return cp; } }
+        protected override void OnResize(EventArgs e) { base.OnResize(e); UpdateShape(); }
         private void UpdateShape()
         {
-            int w = this.Width;
-            int h = this.Height;
-            if (w < 1 || h < 1) return;
-
-            // 短辺を直径とする（正円またはカプセル）
-            int d = Math.Min(w, h);
-
-            GraphicsPath path = new GraphicsPath();
-
-            // 幅と高さがほぼ同じなら正円
-            if (Math.Abs(w - h) < 5)
-            {
-                path.AddEllipse(0, 0, d, d);
-            }
-            else
-            {
-                // カプセル型（角丸長方形）
-                int r = d; // 直径
-                path.AddArc(0, 0, r, r, 90, 180); // 左円弧
-                path.AddArc(w - r, 0, r, r, 270, 180); // 右円弧
-                path.CloseFigure();
-            }
-
-            // ★ここが重要：コントロールの形状そのものをこの形に切り抜く
+            int w = this.Width; int h = this.Height; if (w < 1 || h < 1) return;
+            int d = Math.Min(w, h); GraphicsPath path = new GraphicsPath();
+            if (Math.Abs(w - h) < 5) path.AddEllipse(0, 0, d, d);
+            else { int r = d; path.AddArc(0, 0, r, r, 90, 180); path.AddArc(w - r, 0, r, r, 270, 180); path.CloseFigure(); }
             this.Region = new Region(path);
         }
-
         protected override void OnPaint(PaintEventArgs pevent)
         {
-            Graphics g = pevent.Graphics;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
-
-            // リージョンで切り抜かれているので、単純に塗りつぶせばよい
-            using (Brush bgBrush = new SolidBrush(this.BackColor))
-            {
-                g.FillRegion(bgBrush, this.Region);
-            }
-
-            // テキスト描画
+            Graphics g = pevent.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+            if (this.Parent != null) { using (Brush parentBrush = new SolidBrush(this.Parent.BackColor)) { g.FillRectangle(parentBrush, this.ClientRectangle); } }
+            Color c = this.BackColor.A == 0 ? Color.White : this.BackColor;
+            using (Brush brush = new SolidBrush(c)) { g.FillRegion(brush, this.Region); }
             if (!string.IsNullOrEmpty(this.Text))
             {
-                StringFormat sf = new StringFormat();
-                sf.Alignment = StringAlignment.Center;
-                sf.LineAlignment = StringAlignment.Center;
-
+                StringFormat sf = new StringFormat(); sf.Alignment = StringAlignment.Center; sf.LineAlignment = StringAlignment.Center;
                 using (Brush textBrush = new SolidBrush(this.ForeColor))
                 {
-                    if (RotationAngle != 0)
-                    {
-                        g.TranslateTransform(this.Width / 2, this.Height / 2);
-                        g.RotateTransform(RotationAngle);
-                        g.DrawString(this.Text, this.Font, textBrush, 0, 0, sf);
-                        g.ResetTransform();
-                    }
-                    else
-                    {
-                        g.DrawString(this.Text, this.Font, textBrush, this.ClientRectangle, sf);
-                    }
+                    if (RotationAngle != 0) { g.TranslateTransform(this.Width / 2, this.Height / 2); g.RotateTransform(RotationAngle); g.DrawString(this.Text, this.Font, textBrush, 0, 0, sf); g.ResetTransform(); }
+                    else { g.DrawString(this.Text, this.Font, textBrush, this.ClientRectangle, sf); }
                 }
             }
         }
@@ -538,30 +606,15 @@ namespace SwitchRemoteGUI
         public int RotationAngle { get; set; } = 0;
         protected override void OnPaint(PaintEventArgs e)
         {
-            Graphics g = e.Graphics;
-            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
-            using (Brush bgBrush = new SolidBrush(this.BackColor))
-            {
-                g.FillRectangle(bgBrush, this.ClientRectangle);
-            }
+            Graphics g = e.Graphics; g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+            using (Brush bgBrush = new SolidBrush(this.BackColor)) { g.FillRectangle(bgBrush, this.ClientRectangle); }
             if (!string.IsNullOrEmpty(this.Text))
             {
-                StringFormat sf = new StringFormat();
-                sf.Alignment = StringAlignment.Center;
-                sf.LineAlignment = StringAlignment.Center;
+                StringFormat sf = new StringFormat(); sf.Alignment = StringAlignment.Center; sf.LineAlignment = StringAlignment.Center;
                 using (Brush textBrush = new SolidBrush(this.ForeColor))
                 {
-                    if (RotationAngle != 0)
-                    {
-                        g.TranslateTransform(this.Width / 2, this.Height / 2);
-                        g.RotateTransform(RotationAngle);
-                        g.DrawString(this.Text, this.Font, textBrush, 0, 0, sf);
-                        g.ResetTransform();
-                    }
-                    else
-                    {
-                        g.DrawString(this.Text, this.Font, textBrush, this.ClientRectangle, sf);
-                    }
+                    if (RotationAngle != 0) { g.TranslateTransform(this.Width / 2, this.Height / 2); g.RotateTransform(RotationAngle); g.DrawString(this.Text, this.Font, textBrush, 0, 0, sf); g.ResetTransform(); }
+                    else { g.DrawString(this.Text, this.Font, textBrush, this.ClientRectangle, sf); }
                 }
             }
         }
