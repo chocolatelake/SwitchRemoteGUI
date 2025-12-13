@@ -27,21 +27,18 @@ namespace SwitchRemoteGUI
         bool _isReady = false;
         bool _isSolidBlack = false;
         int _rotationAngle = 0;
-        bool _isHoldMode = true; // 連射モード
-        bool _isMenuOpen = false; // メニュー開閉
+        bool _isHoldMode = true;
+        bool _isMenuOpen = false;
 
         System.Windows.Forms.Timer _repeatTimer;
         string _repeatingCmd = "";
         DateTime _lastSendTime = DateTime.MinValue;
         private const int SEND_INTERVAL = 400;
 
-        // メイン画面パーツ
         RotatableButton? btnLayoutToggle;
         RotatableButton? btnBgToggle;
         RotatableLabel? lblTitle;
         RotatableButton? btnMenu;
-
-        // ★メイン画面にはHoldボタンのみ残す
         RotatableButton? btnHoldToggle;
 
         RotatableButton? btnZL, btnL, btnR, btnZR;
@@ -50,10 +47,9 @@ namespace SwitchRemoteGUI
         RotatableButton? btnMinus, btnHome, btnCap, btnPlus;
         RotatableButton? btnL3, btnR3;
 
-        // メニュー内パーツ (OBSボタンはこちらへ)
         Panel? pnlMenu;
         RotatableButton? mBtnLR;
-        RotatableButton? mBtnObs, mBtnHide; // ★追加
+        RotatableButton? mBtnObs, mBtnHide;
         RotatableButton? mBtnRot, mBtnTrans;
         RotatableButton? mBtnFull, mBtnClose;
 
@@ -74,6 +70,8 @@ namespace SwitchRemoteGUI
             _repeatTimer.Interval = SEND_INTERVAL;
             _repeatTimer.Tick += RepeatTimer_Tick;
 
+            // ★修正: デフォルトを黒背景・黒透過にする
+            // これにより、アンチエイリアスのフチが黒くなり、目立たなくなる
             SetTransparentMode();
 
             this.Padding = new Padding(borderSize);
@@ -133,17 +131,13 @@ namespace SwitchRemoteGUI
             }
         }
 
-        // --- 特殊機能 ---
         void ToggleMenu()
         {
             _isMenuOpen = !_isMenuOpen;
             if (pnlMenu != null)
             {
                 pnlMenu.Visible = _isMenuOpen;
-                if (_isMenuOpen)
-                {
-                    pnlMenu.BringToFront();
-                }
+                if (_isMenuOpen) { pnlMenu.BringToFront(); }
                 UpdateLayout();
             }
         }
@@ -188,16 +182,45 @@ namespace SwitchRemoteGUI
 
             _isMenuOpen = false;
             if (pnlMenu != null) pnlMenu.Visible = false;
-
             UpdateLayout();
         }
 
-        void SetTransparentMode() { this.TransparencyKey = Color.Magenta; this.BackColor = Color.Magenta; this.Opacity = 0.70; _isSolidBlack = false; this.Invalidate(); }
-        void SetSolidBlackMode() { this.TransparencyKey = Color.Empty; this.BackColor = Color.Black; this.Opacity = 1.0; _isSolidBlack = true; this.Invalidate(); }
+        // ★★★ 修正: 透過色を「黒」に変更 ★★★
+        void SetTransparentMode()
+        {
+            // 黒を透過キーにする。
+            // これならアンチエイリアスの境界線が黒っぽくなっても、背景(おそらくゲーム画面など)に馴染みやすい。
+            // また、マゼンタのような派手な色が残るのを防げる。
+            // ※ただし、文字色などを黒にすると透けてしまうので注意が必要だが、今回は文字は黒ではないのでOK
+
+            // 安全のため、完全に真っ黒(0,0,0)ではなく、限りなく黒に近い色(1,1,1)を背景にする手もあるが、
+            // TransparencyKeyは完全一致なので、ここでは (1,1,1) を使う。
+            // そうすれば (0,0,0) の黒文字などは透けない。
+
+            Color keyColor = Color.FromArgb(1, 1, 1);
+
+            this.BackColor = keyColor;
+            this.TransparencyKey = keyColor;
+            this.Opacity = 1.0;
+            _isSolidBlack = false;
+            this.Invalidate();
+        }
+
+        void SetSolidBlackMode()
+        {
+            this.TransparencyKey = Color.Empty;
+            this.BackColor = Color.Black;
+            this.Opacity = 1.0;
+            _isSolidBlack = true;
+            this.Invalidate();
+        }
 
         private void Form1_Paint(object sender, PaintEventArgs e)
         {
-            Color frameColor = _isSolidBlack ? Color.DarkGray : Color.Black;
+            // 透過モード時は枠線を描かない
+            if (!_isSolidBlack) return;
+
+            Color frameColor = Color.DarkGray;
             using (Pen p = new Pen(frameColor, borderSize))
             {
                 p.Alignment = System.Drawing.Drawing2D.PenAlignment.Inset;
@@ -232,7 +255,6 @@ namespace SwitchRemoteGUI
 
         void CreateUI()
         {
-            // メニューパネル
             pnlMenu = new Panel();
             pnlMenu.BackColor = Color.FromArgb(220, 30, 30, 30);
             pnlMenu.Visible = false;
@@ -247,7 +269,6 @@ namespace SwitchRemoteGUI
             lblTitle.MouseDown += TopBar_MouseDown;
             this.Controls.Add(lblTitle);
 
-            // ヘルパー
             RotatableButton MkBtn(Control parent, string txt, Color? bg, EventHandler click)
             {
                 RotatableButton b = new RotatableButton();
@@ -275,20 +296,16 @@ namespace SwitchRemoteGUI
                 return b;
             }
 
-            // --- メイン画面 ---
             btnLayoutToggle = MkBtn(this, "↻ 0°", Color.FromArgb(70, 70, 70), (s, e) => RotateLayout());
             btnLayoutToggle.ForeColor = Color.White;
 
             btnBgToggle = MkBtn(this, "透過", Color.FromArgb(70, 70, 70), (s, e) => ToggleBlackMode());
             btnBgToggle.ForeColor = Color.White;
 
-            // ★ Holdボタン (メイン)
             btnHoldToggle = MkBtn(this, "Hold: ON", Color.LightGreen, (s, e) => ToggleHoldMode());
 
-            // メニューボタン
             btnMenu = MkBtn(this, "MENU", Color.Orange, (s, e) => ToggleMenu());
 
-            // ゲームボタン
             btnZL = MkGame("ZL", "e", false, Color.DarkGray);
             btnL = MkGame("L", "q", false, Color.Gray);
             btnR = MkGame("R", "w", false, Color.Gray);
@@ -312,7 +329,6 @@ namespace SwitchRemoteGUI
             btnL3 = MkGame("L3", "3", false, Color.Silver);
             btnR3 = MkGame("R3", "4", false, Color.Silver);
 
-            // --- メニュー内 ---
             mBtnLR = MkBtn(pnlMenu, "LR Push", Color.Orange, (s, e) => { Send("qw"); ToggleMenu(); });
             mBtnObs = MkBtn(pnlMenu, "OBS", Color.LightSkyBlue, (s, e) => { ControlApp("obs", true); ToggleMenu(); });
             mBtnHide = MkBtn(pnlMenu, "Hide", Color.LightGray, (s, e) => { ControlApp("obs", false); ToggleMenu(); });
@@ -335,13 +351,11 @@ namespace SwitchRemoteGUI
             int topBarH = 24;
             int margin = 5;
 
-            // メニューパネルもサイズ追従
             if (pnlMenu != null) pnlMenu.Bounds = new Rectangle(innerX, innerY, innerW, H - pad * 2);
 
             if (_isMenuOpen)
             {
                 UpdateMenuLayout(innerW, H - pad * 2);
-                // メニューが開いていてもメイン計算は回す（最大化反映のため）
             }
 
             int contentY = innerY + topBarH + margin;
@@ -349,28 +363,23 @@ namespace SwitchRemoteGUI
 
             var rects = new System.Collections.Generic.Dictionary<Control, Rectangle>();
 
-            // タイトルバー
             if (lblTitle != null) rects[lblTitle] = new Rectangle(innerX, innerY, innerW, topBarH);
 
-            // トップバーのボタン (回転・透過)
             int toggleW = (innerW - margin) / 4;
             if (btnBgToggle != null) rects[btnBgToggle] = new Rectangle(innerX + innerW - toggleW, innerY, toggleW, topBarH);
             if (btnLayoutToggle != null) rects[btnLayoutToggle] = new Rectangle(innerX + innerW - toggleW * 2 - margin, innerY, toggleW, topBarH);
 
             int btnBaseSize = 30;
 
-            // ★★★ 縦レイアウト (90度 / 270度) ★★★
             if (_rotationAngle == 90 || _rotationAngle == 270)
             {
                 int rowH = contentH / 14;
                 int y = contentY;
 
-                // 1. Hold (1つだけ大きく)
                 int holdH = Math.Max(30, rowH);
                 if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX, y, innerW, holdH);
                 y += holdH + margin;
 
-                // 2. ショルダー (ZL, L, MENU, R, ZR)
                 int shH = Math.Max(40, rowH * 2);
                 int shW = (innerW - margin * 4) / 5;
                 if (btnZL != null) rects[btnZL] = new Rectangle(innerX, y, shW, shH);
@@ -380,14 +389,12 @@ namespace SwitchRemoteGUI
                 if (btnZR != null) rects[btnZR] = new Rectangle(innerX + (shW + margin) * 4, y, shW, shH);
                 y += shH + margin;
 
-                // 3. L3/R3
                 int stickH = Math.Max(30, rowH);
                 int stickW = (innerW - margin) / 2;
                 if (btnL3 != null) rects[btnL3] = new Rectangle(innerX, y, stickW, stickH);
                 if (btnR3 != null) rects[btnR3] = new Rectangle(innerX + stickW + margin, y, stickW, stickH);
                 y += stickH + margin;
 
-                // 4. 十字キー
                 int dpadH = Math.Max(100, rowH * 3);
                 btnBaseSize = Math.Min(innerW / 3, dpadH / 3);
                 int centerX = innerX + innerW / 2;
@@ -398,7 +405,6 @@ namespace SwitchRemoteGUI
                 if (btnDown != null) rects[btnDown] = new Rectangle(centerX - btnBaseSize / 2, centerY - btnBaseSize / 2 + btnBaseSize, btnBaseSize, btnBaseSize);
                 y += dpadH + margin;
 
-                // 5. システム
                 int sysH = Math.Max(30, rowH);
                 int sysW = (innerW - margin * 3) / 4;
                 if (btnMinus != null) rects[btnMinus] = new Rectangle(innerX, y, sysW, sysH);
@@ -407,7 +413,6 @@ namespace SwitchRemoteGUI
                 if (btnPlus != null) rects[btnPlus] = new Rectangle(innerX + (sysW + margin) * 3, y, sysW, sysH);
                 y += sysH + margin;
 
-                // 6. ABXY
                 int abxyH = dpadH;
                 centerY = y + abxyH / 2;
                 if (btnX != null) rects[btnX] = new Rectangle(centerX - btnBaseSize / 2, centerY - btnBaseSize / 2 - btnBaseSize, btnBaseSize, btnBaseSize);
@@ -415,7 +420,6 @@ namespace SwitchRemoteGUI
                 if (btnA != null) rects[btnA] = new Rectangle(centerX - btnBaseSize / 2 + btnBaseSize, centerY - btnBaseSize / 2, btnBaseSize, btnBaseSize);
                 if (btnB != null) rects[btnB] = new Rectangle(centerX - btnBaseSize / 2, centerY - btnBaseSize / 2 + btnBaseSize, btnBaseSize, btnBaseSize);
             }
-            // ★★★ 横レイアウト (0度 / 180度) ★★★
             else
             {
                 int holdH = (int)(contentH * 0.10);
@@ -437,10 +441,8 @@ namespace SwitchRemoteGUI
                 int ySys = yMain + mainH + margin;
                 int yStick = ySys + systemH + margin;
 
-                // 1. Hold (1つだけ)
                 if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX, yHold, innerW, holdH);
 
-                // 2. ショルダー
                 int shW = (innerW - margin * 4) / 5;
                 if (btnZL != null) rects[btnZL] = new Rectangle(innerX, ySh, shW, shoulderH);
                 if (btnL != null) rects[btnL] = new Rectangle(innerX + shW + margin, ySh, shW, shoulderH);
@@ -448,7 +450,6 @@ namespace SwitchRemoteGUI
                 if (btnR != null) rects[btnR] = new Rectangle(innerX + (shW + margin) * 3, ySh, shW, shoulderH);
                 if (btnZR != null) rects[btnZR] = new Rectangle(innerX + (shW + margin) * 4, ySh, shW, shoulderH);
 
-                // メイン
                 int leftAreaW = innerW / 2;
                 btnBaseSize = Math.Min(mainH / 3, (leftAreaW - margin * 2) / 3);
 
@@ -465,14 +466,12 @@ namespace SwitchRemoteGUI
                 if (btnA != null) rects[btnA] = new Rectangle(rightCenterX - btnBaseSize / 2 + btnBaseSize, mainCenterY - btnBaseSize / 2, btnBaseSize, btnBaseSize);
                 if (btnB != null) rects[btnB] = new Rectangle(rightCenterX - btnBaseSize / 2, mainCenterY - btnBaseSize / 2 + btnBaseSize, btnBaseSize, btnBaseSize);
 
-                // システム
                 int sysW = (innerW - margin * 3) / 4;
                 if (btnMinus != null) rects[btnMinus] = new Rectangle(innerX, ySys, sysW, systemH);
                 if (btnHome != null) rects[btnHome] = new Rectangle(innerX + sysW + margin, ySys, sysW, systemH);
                 if (btnCap != null) rects[btnCap] = new Rectangle(innerX + (sysW + margin) * 2, ySys, sysW, systemH);
                 if (btnPlus != null) rects[btnPlus] = new Rectangle(innerX + (sysW + margin) * 3, ySys, sysW, systemH);
 
-                // スティック
                 int stickW = (innerW - margin) / 2;
                 if (btnL3 != null) rects[btnL3] = new Rectangle(innerX, yStick, stickW, stickH);
                 if (btnR3 != null) rects[btnR3] = new Rectangle(innerX + stickW + margin, yStick, stickW, stickH);
@@ -515,7 +514,6 @@ namespace SwitchRemoteGUI
             int btnW = (w - margin * (cols + 1)) / cols;
             int btnH = (h - margin * (rows + 1)) / rows;
 
-            // メニューボタン一覧
             Control[] menuBtns = { mBtnLR, mBtnObs, mBtnHide, mBtnRot, mBtnTrans, mBtnFull, mBtnClose };
 
             for (int i = 0; i < menuBtns.Length; i++)
