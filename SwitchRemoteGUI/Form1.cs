@@ -14,7 +14,6 @@ namespace SwitchRemoteGUI
         string portName = "COM5";
         SerialPort? port;
 
-        // --- Windows API ---
         [DllImport("user32.dll")] public static extern int SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
         [DllImport("user32.dll")] public static extern bool ReleaseCapture();
         [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -29,6 +28,9 @@ namespace SwitchRemoteGUI
         int _rotationAngle = 0;
         bool _isHoldMode = true;
         bool _isMenuOpen = false;
+
+        // ★修正: ウィンドウ全体の透明度 (初期値 0.3 = 30% うっすら)
+        double _targetOpacity = 0.3;
 
         System.Windows.Forms.Timer _repeatTimer;
         string _repeatingCmd = "";
@@ -52,6 +54,7 @@ namespace SwitchRemoteGUI
         RotatableButton? mBtnObs, mBtnHide;
         RotatableButton? mBtnRot, mBtnTrans;
         RotatableButton? mBtnFull, mBtnClose;
+        RotatableButton? mBtnOp; // 透明度変更ボタン
 
         private int resizeGrip = 10;
         private int borderSize = 2;
@@ -70,8 +73,6 @@ namespace SwitchRemoteGUI
             _repeatTimer.Interval = SEND_INTERVAL;
             _repeatTimer.Tick += RepeatTimer_Tick;
 
-            // ★修正: デフォルトを黒背景・黒透過にする
-            // これにより、アンチエイリアスのフチが黒くなり、目立たなくなる
             SetTransparentMode();
 
             this.Padding = new Padding(borderSize);
@@ -185,23 +186,33 @@ namespace SwitchRemoteGUI
             UpdateLayout();
         }
 
-        // ★★★ 修正: 透過色を「黒」に変更 ★★★
+        // ★追加: 透明度切り替え機能
+        void ToggleOpacity()
+        {
+            // 10% -> 30% -> 50% -> 80% -> 100% -> 10% ...
+            if (_targetOpacity < 0.2) _targetOpacity = 0.3;
+            else if (_targetOpacity < 0.4) _targetOpacity = 0.5;
+            else if (_targetOpacity < 0.7) _targetOpacity = 0.8;
+            else if (_targetOpacity < 0.9) _targetOpacity = 1.0;
+            else _targetOpacity = 0.1; // 10% (かなり薄い)
+
+            if (mBtnOp != null) mBtnOp.Text = $"Op: {(int)(_targetOpacity * 100)}%";
+
+            // 透過モード中なら即適用
+            if (!_isSolidBlack) this.Opacity = _targetOpacity;
+        }
+
         void SetTransparentMode()
         {
-            // 黒を透過キーにする。
-            // これならアンチエイリアスの境界線が黒っぽくなっても、背景(おそらくゲーム画面など)に馴染みやすい。
-            // また、マゼンタのような派手な色が残るのを防げる。
-            // ※ただし、文字色などを黒にすると透けてしまうので注意が必要だが、今回は文字は黒ではないのでOK
-
-            // 安全のため、完全に真っ黒(0,0,0)ではなく、限りなく黒に近い色(1,1,1)を背景にする手もあるが、
-            // TransparencyKeyは完全一致なので、ここでは (1,1,1) を使う。
-            // そうすれば (0,0,0) の黒文字などは透けない。
-
+            // 透過キー色 (黒に近い色)
             Color keyColor = Color.FromArgb(1, 1, 1);
-
             this.BackColor = keyColor;
             this.TransparencyKey = keyColor;
-            this.Opacity = 1.0;
+
+            // ★重要: ここでウィンドウ全体の透明度を適用する
+            // これにより、ボタンも含めて全体が透けるようになる
+            this.Opacity = _targetOpacity;
+
             _isSolidBlack = false;
             this.Invalidate();
         }
@@ -210,16 +221,14 @@ namespace SwitchRemoteGUI
         {
             this.TransparencyKey = Color.Empty;
             this.BackColor = Color.Black;
-            this.Opacity = 1.0;
+            this.Opacity = 1.0; // 黒背景モードはくっきり表示
             _isSolidBlack = true;
             this.Invalidate();
         }
 
         private void Form1_Paint(object sender, PaintEventArgs e)
         {
-            // 透過モード時は枠線を描かない
             if (!_isSolidBlack) return;
-
             Color frameColor = Color.DarkGray;
             using (Pen p = new Pen(frameColor, borderSize))
             {
@@ -335,6 +344,10 @@ namespace SwitchRemoteGUI
             mBtnRot = MkBtn(pnlMenu, "Rotate", Color.White, (s, e) => { RotateLayout(); ToggleMenu(); });
             mBtnTrans = MkBtn(pnlMenu, "Trans", Color.LightGray, (s, e) => { ToggleBlackMode(); ToggleMenu(); });
             mBtnFull = MkBtn(pnlMenu, "Full / Win", Color.LightCoral, (s, e) => { ToggleMaximize(); });
+
+            // ★追加: 透明度変更ボタン
+            mBtnOp = MkBtn(pnlMenu, $"Op: {(int)(_targetOpacity * 100)}%", Color.White, (s, e) => { ToggleOpacity(); });
+
             mBtnClose = MkBtn(pnlMenu, "Close Menu", Color.Silver, (s, e) => ToggleMenu());
         }
 
@@ -353,10 +366,7 @@ namespace SwitchRemoteGUI
 
             if (pnlMenu != null) pnlMenu.Bounds = new Rectangle(innerX, innerY, innerW, H - pad * 2);
 
-            if (_isMenuOpen)
-            {
-                UpdateMenuLayout(innerW, H - pad * 2);
-            }
+            if (_isMenuOpen) UpdateMenuLayout(innerW, H - pad * 2);
 
             int contentY = innerY + topBarH + margin;
             int contentH = H - pad - contentY;
@@ -514,7 +524,7 @@ namespace SwitchRemoteGUI
             int btnW = (w - margin * (cols + 1)) / cols;
             int btnH = (h - margin * (rows + 1)) / rows;
 
-            Control[] menuBtns = { mBtnLR, mBtnObs, mBtnHide, mBtnRot, mBtnTrans, mBtnFull, mBtnClose };
+            Control[] menuBtns = { mBtnLR, mBtnObs, mBtnHide, mBtnRot, mBtnTrans, mBtnFull, mBtnOp, mBtnClose };
 
             for (int i = 0; i < menuBtns.Length; i++)
             {
@@ -551,6 +561,7 @@ namespace SwitchRemoteGUI
         void ConnectPort() { try { port = new SerialPort(portName, 9600); port.Open(); } catch { } }
     }
 
+    // ★★★ 修正: 描画クラスを元に戻す ★★★
     public class RotatableButton : Button
     {
         public int RotationAngle { get; set; } = 0;
@@ -573,8 +584,11 @@ namespace SwitchRemoteGUI
         {
             Graphics g = pevent.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
             if (this.Parent != null) { using (Brush parentBrush = new SolidBrush(this.Parent.BackColor)) { g.FillRectangle(parentBrush, this.ClientRectangle); } }
+
+            // ★修正: 純粋なBackColorで塗りつぶす (透明化はFormのOpacityで行う)
             Color c = this.BackColor.A == 0 ? Color.White : this.BackColor;
             using (Brush brush = new SolidBrush(c)) { g.FillRegion(brush, this.Region); }
+
             if (!string.IsNullOrEmpty(this.Text))
             {
                 StringFormat sf = new StringFormat(); sf.Alignment = StringAlignment.Center; sf.LineAlignment = StringAlignment.Center;
