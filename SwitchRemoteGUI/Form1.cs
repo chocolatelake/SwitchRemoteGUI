@@ -4,13 +4,17 @@ using System.IO.Ports;
 using System.Windows.Forms;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.IO;
+#nullable disable
 
 namespace SwitchRemoteGUI
 {
     public partial class Form1 : Form
     {
-        string portName = "COM5"; // ★自分のポート番号
-        SerialPort port;
+        // ★設定必須項目
+        string portName = "COM5";
+
+        SerialPort? port;
 
         // --- Windows API ---
         [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -25,22 +29,35 @@ namespace SwitchRemoteGUI
         bool _isReady = false;
 
         // ★状態管理フラグ
-        bool _isSolidBlack = false; // 背景黒モード
-        bool _isVertical = false;   // 縦長モード (スマホ用)
+        bool _isSolidBlack = false;
+        bool _isVertical = false;
+
+        // ★連射・送信制御用
+        System.Windows.Forms.Timer _repeatTimer;
+        string _repeatingCmd = "";
+
+        // ★前回の送信時刻（連打防止用）
+        DateTime _lastSendTime = DateTime.MinValue;
+        // ★最小送信間隔(ミリ秒)。これを下回る連打は無視する（マイコンのバッファ溢れ防止）
+        // マイコン側の処理速度に合わせて調整（通常100ms〜150ms）
+        private const int MIN_SEND_INTERVAL = 120;
 
         // UIパーツ
-        Button btnLayoutToggle;
-        Button btnBgToggle;
-        Label lblTitle;
+        Button? btnLayoutToggle;
+        Button? btnBgToggle;
+        Label? lblTitle;
 
-        Button btnObsShow, btnObsHide;
-        Button btnZL, btnL, btnLR, btnR, btnZR;
-        Button btnUp, btnLeft, btnDown, btnRight;
-        Button btnX, btnY, btnB, btnA;
-        Button btnMinus, btnHome, btnCap, btnPlus;
-        Button btnL3, btnR3;
+        Button? btnObsShow, btnObsHide;
+        Button? btnZL, btnL, btnLR, btnR, btnZR;
+        Button? btnUp, btnLeft, btnDown, btnRight;
+        Button? btnX, btnY, btnB, btnA;
+        Button? btnMinus, btnHome, btnCap, btnPlus;
+        Button? btnL3, btnR3;
 
         private int borderSize = 5;
+
+        private readonly string LayoutFilePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "switch_layout.txt");
+
 
         public Form1()
         {
@@ -48,6 +65,12 @@ namespace SwitchRemoteGUI
             this.TopMost = true;
             this.FormBorderStyle = FormBorderStyle.None;
             this.MinimumSize = new Size(300, 300);
+
+            // ★連射タイマー設定 
+            // マイコンの処理落ちを防ぐため、少し長め(150ms)に設定
+            _repeatTimer = new System.Windows.Forms.Timer();
+            _repeatTimer.Interval = 400;
+            _repeatTimer.Tick += RepeatTimer_Tick;
 
             SetTransparentMode();
 
@@ -59,13 +82,52 @@ namespace SwitchRemoteGUI
             ConnectPort();
             CreateUI();
 
-            // 初期サイズを横モードの想定サイズに設定
             this.Size = new Size(800, 400);
 
             _isReady = true;
             UpdateLayout();
         }
 
+        // --- 連射処理 ---
+        private void RepeatTimer_Tick(object? sender, EventArgs e)
+        {
+            if (!string.IsNullOrEmpty(_repeatingCmd))
+            {
+                // 強制送信フラグを立てて送る（長押し中は間隔管理されているのでそのまま送る）
+                Send(_repeatingCmd, true);
+            }
+        }
+
+        // --- コマンド送信処理（改良版） ---
+        // force: trueなら間隔チェックを無視して送信（長押し連射用）
+        void Send(string cmd, bool force = false)
+        {
+            if (port != null && port.IsOpen)
+            {
+                // ★間隔チェック: 前回の送信から時間が経っていないなら、「送らない」
+                // これにより、マイコン側にデータが溜まるのを物理的に防ぐ
+                double msSinceLast = (DateTime.Now - _lastSendTime).TotalMilliseconds;
+                if (!force && msSinceLast < MIN_SEND_INTERVAL)
+                {
+                    // まだ早いので無視（これが「以前のキューを却下」の代わりになる）
+                    return;
+                }
+
+                try
+                {
+                    // 一応PC側のバッファもクリアしておく
+                    port.DiscardOutBuffer();
+
+                    port.Write(cmd);
+
+                    // 送信時刻を記録
+                    _lastSendTime = DateTime.Now;
+                }
+                catch { }
+            }
+        }
+
+        // --- モード切り替え ---
         void SetTransparentMode()
         {
             this.TransparencyKey = Color.Magenta;
@@ -87,20 +149,18 @@ namespace SwitchRemoteGUI
         void ToggleLayoutMode()
         {
             _isVertical = !_isVertical;
-
             if (_isVertical)
             {
-                // 縦モード: 上半分空き + 下半分コントローラー (スマホ縦持ちに合わせやすいサイズ)
                 this.Size = new Size(400, 800);
-                btnLayoutToggle.Text = "🔀 LAYOUT: 縦 (分割)";
+                if (btnLayoutToggle != null) btnLayoutToggle.Text = "🔀 LAYOUT: 縦 (分割)";
             }
             else
             {
-                // 横モード: フルスクリーンコントローラー (ゲーム画面の上に乗せる)
                 this.Size = new Size(800, 400);
-                btnLayoutToggle.Text = "🔀 LAYOUT: 横 (全面)";
+                if (btnLayoutToggle != null) btnLayoutToggle.Text = "🔀 LAYOUT: 横 (全面)";
             }
             UpdateLayout();
+            WriteGameLayoutFile();
         }
 
         void ToggleBlackMode()
@@ -108,16 +168,50 @@ namespace SwitchRemoteGUI
             if (_isSolidBlack)
             {
                 SetTransparentMode();
-                btnBgToggle.Text = "⚫ BG: 透過";
+                if (btnBgToggle != null) btnBgToggle.Text = "⚫ BG: 透過";
             }
             else
             {
                 SetSolidBlackMode();
-                btnBgToggle.Text = "⚫ BG: 黒";
+                if (btnBgToggle != null) btnBgToggle.Text = "⚫ BG: 黒";
             }
-            btnBgToggle.BackColor = _isSolidBlack ? Color.FromArgb(100, 100, 100) : Color.FromArgb(70, 70, 70);
+            if (btnBgToggle != null)
+                btnBgToggle.BackColor = _isSolidBlack ? Color.FromArgb(100, 100, 100) : Color.FromArgb(70, 70, 70);
+
+            this.TopMost = true;
         }
 
+        // --- AutoHotkey連携 ---
+        void WriteGameLayoutFile()
+        {
+            if (_isVertical)
+            {
+                int W = this.ClientSize.Width;
+                int H = this.ClientSize.Height;
+                int pad = borderSize;
+                int innerW = W - pad * 2;
+                int innerX = pad;
+                int innerY = pad;
+                int topBarH = 24;
+                int margin = 5;
+
+                int gameX = this.Location.X + innerX;
+                int gameY = this.Location.Y + innerY + topBarH + margin;
+                int gameW = innerW;
+                int gameH = (H / 2) - (topBarH + margin * 2);
+
+                string layoutData = $"{gameX} {gameY} {gameW} {gameH}";
+
+                try { File.WriteAllText(LayoutFilePath, layoutData); }
+                catch (Exception ex) { MessageBox.Show($"Error: {ex.Message}", "Error"); }
+            }
+            else
+            {
+                try { File.WriteAllText(LayoutFilePath, ""); } catch { }
+            }
+        }
+
+        // --- 描画・ウィンドウ処理 ---
         private void Form1_Paint(object sender, PaintEventArgs e)
         {
             Color frameColor = _isSolidBlack ? Color.DarkGray : Color.Black;
@@ -136,7 +230,6 @@ namespace SwitchRemoteGUI
             {
                 Point pos = this.PointToClient(new Point(m.LParam.ToInt32()));
                 int grip = 16;
-
                 if (pos.X <= grip && pos.Y <= grip) m.Result = (IntPtr)13;
                 else if (pos.X >= this.ClientSize.Width - grip && pos.Y <= grip) m.Result = (IntPtr)14;
                 else if (pos.X <= grip && pos.Y >= this.ClientSize.Height - grip) m.Result = (IntPtr)16;
@@ -164,34 +257,9 @@ namespace SwitchRemoteGUI
             UpdateLayout();
         }
 
-        void ConnectPort()
-        {
-            try { port = new SerialPort(portName, 9600); port.Open(); } catch { }
-        }
-
-        void Send(string cmd)
-        {
-            if (port != null && port.IsOpen) port.Write(cmd);
-        }
-
-        void ControlApp(string keyword, bool show)
-        {
-            Process[] processList = Process.GetProcesses();
-            foreach (Process p in processList)
-            {
-                if (!string.IsNullOrEmpty(p.MainWindowTitle) &&
-                   (p.ProcessName.ToLower().Contains(keyword) || p.MainWindowTitle.ToLower().Contains(keyword)))
-                {
-                    if (show) { if (IsIconic(p.MainWindowHandle)) ShowWindowAsync(p.MainWindowHandle, SW_RESTORE); SetForegroundWindow(p.MainWindowHandle); }
-                    else ShowWindowAsync(p.MainWindowHandle, SW_MINIMIZE);
-                    return;
-                }
-            }
-        }
-
+        // --- UI作成 ---
         void CreateUI()
         {
-            // トップバーのUIは省略 (前回のコードから変更なし)
             lblTitle = new Label();
             lblTitle.Text = ":::: Switch Controller ::::";
             lblTitle.TextAlign = ContentAlignment.MiddleCenter;
@@ -221,8 +289,8 @@ namespace SwitchRemoteGUI
             btnBgToggle.Click += (s, e) => ToggleBlackMode();
             this.Controls.Add(btnBgToggle);
 
-            // コントローラーボタンの作成は前回のコードから変更なし
-            Button MkBtn(string txt, string cmd, Color? bg = null)
+            // OBS操作用 (制限なし)
+            Button MkControlBtn(string txt, string cmd, Color? bg = null)
             {
                 Button b = new Button();
                 b.Text = txt;
@@ -230,39 +298,81 @@ namespace SwitchRemoteGUI
                 b.FlatStyle = FlatStyle.Flat;
                 b.FlatAppearance.BorderSize = 0;
                 b.TabStop = false;
-                if (cmd != "") b.Click += (s, e) => Send(cmd);
+                if (cmd != "") b.Click += (s, e) => Send(cmd, true); // Controlは常に送る
                 this.Controls.Add(b);
                 return b;
             }
 
-            btnObsShow = MkBtn("📺 戻す", "", Color.LightSkyBlue);
+            // ゲーム用 (MouseDownで送信、連打制限あり)
+            Button MkGameBtn(string txt, string cmd, bool isRepeat, Color? bg = null)
+            {
+                Button b = new Button();
+                b.Text = txt;
+                b.BackColor = bg ?? Color.White;
+                b.FlatStyle = FlatStyle.Flat;
+                b.FlatAppearance.BorderSize = 0;
+                b.TabStop = false;
+
+                b.MouseDown += (s, e) => {
+                    if (isRepeat)
+                    {
+                        // 連射モード: 即時送信＆タイマー開始
+                        _repeatingCmd = cmd;
+                        Send(cmd, true); // 初回は強制送信
+                        _repeatTimer.Start();
+                    }
+                    else
+                    {
+                        // 単発モード: 制限付きで送信（連打しても間引かれる）
+                        Send(cmd, false);
+                    }
+                };
+
+                b.MouseUp += (s, e) => {
+                    if (isRepeat)
+                    {
+                        _repeatTimer.Stop();
+                        _repeatingCmd = "";
+                    }
+                    // 離したときは何も送らない（送信を止めるだけでいい）
+                    // マイコンへの送信が止まれば、マイコンのバッファが尽き次第止まる
+                    // 今回は「送信制限」でバッファを枯渇させているので、これでOK
+                };
+
+                this.Controls.Add(b);
+                return b;
+            }
+
+            // OBS
+            btnObsShow = MkControlBtn("📺 戻す", "", Color.LightSkyBlue);
             btnObsShow.Click += (s, e) => ControlApp("obs", true);
-            btnObsHide = MkBtn("＿ 隠す", "", Color.LightGray);
+            btnObsHide = MkControlBtn("＿ 隠す", "", Color.LightGray);
             btnObsHide.Click += (s, e) => ControlApp("obs", false);
 
-            btnZL = MkBtn("ZL", "e", Color.DarkGray);
-            btnL = MkBtn("L", "q", Color.Gray);
-            btnLR = MkBtn("LR", "qw", Color.Orange);
-            btnR = MkBtn("R", "w", Color.Gray);
-            btnZR = MkBtn("ZR", "r", Color.DarkGray);
+            // ゲームボタン
+            btnZL = MkGameBtn("ZL", "e", false, Color.DarkGray);
+            btnL = MkGameBtn("L", "q", false, Color.Gray);
+            btnLR = MkGameBtn("LR", "qw", false, Color.Orange);
+            btnR = MkGameBtn("R", "w", false, Color.Gray);
+            btnZR = MkGameBtn("ZR", "r", false, Color.DarkGray);
 
-            btnUp = MkBtn("↑", "I");
-            btnLeft = MkBtn("←", "J");
-            btnDown = MkBtn("↓", "K");
-            btnRight = MkBtn("→", "L");
+            btnUp = MkGameBtn("↑", "I", true);
+            btnLeft = MkGameBtn("←", "J", true);
+            btnDown = MkGameBtn("↓", "K", true);
+            btnRight = MkGameBtn("→", "L", true);
 
-            btnX = MkBtn("X", "s", Color.Yellow);
-            btnY = MkBtn("Y", "a", Color.LightGreen);
-            btnB = MkBtn("B", "x", Color.Red);
-            btnA = MkBtn("A", "z", Color.Cyan);
+            btnX = MkGameBtn("X", "s", false, Color.Yellow);
+            btnY = MkGameBtn("Y", "a", false, Color.LightGreen);
+            btnB = MkGameBtn("B", "x", false, Color.Red);
+            btnA = MkGameBtn("A", "z", false, Color.Cyan);
 
-            btnMinus = MkBtn("-", "m", Color.LightGray);
-            btnHome = MkBtn("🏠", "h", Color.LightBlue);
-            btnCap = MkBtn("📷", "c", Color.Pink);
-            btnPlus = MkBtn("+", "n", Color.LightGray);
+            btnMinus = MkGameBtn("-", "m", false, Color.LightGray);
+            btnHome = MkGameBtn("🏠", "h", false, Color.LightBlue);
+            btnCap = MkGameBtn("📷", "c", false, Color.Pink);
+            btnPlus = MkGameBtn("+", "n", false, Color.LightGray);
 
-            btnL3 = MkBtn("L3", "3", Color.Silver);
-            btnR3 = MkBtn("R3", "4", Color.Silver);
+            btnL3 = MkGameBtn("L3", "3", false, Color.Silver);
+            btnR3 = MkGameBtn("R3", "4", false, Color.Silver);
         }
 
         void UpdateLayout()
@@ -280,53 +390,33 @@ namespace SwitchRemoteGUI
             int margin = 5;
             int topBarH = 24;
 
-            // --- トップバーのレイアウト ---
+            // --- トップバー ---
             int toggleW = (innerW - margin) / 4;
-            int titleW = innerW - toggleW * 2 - margin;
+            if (btnBgToggle != null) btnBgToggle.Bounds = new Rectangle(innerX + innerW - toggleW, innerY, toggleW, topBarH);
+            if (btnLayoutToggle != null) btnLayoutToggle.Bounds = new Rectangle(innerX + innerW - toggleW * 2 - margin, innerY, toggleW, topBarH);
+            if (lblTitle != null) lblTitle.Bounds = new Rectangle(innerX, innerY, innerW - toggleW * 2 - margin * 2, topBarH);
 
-            lblTitle.Bounds = new Rectangle(innerX, innerY, titleW, topBarH);
-            btnLayoutToggle.Bounds = new Rectangle(innerX + titleW + margin, innerY, toggleW, topBarH);
-            btnBgToggle.Bounds = new Rectangle(innerX + titleW + toggleW + margin * 2, innerY, toggleW, topBarH);
-            // btnBgToggleの位置を再調整（マージンがずれていたため）
-            btnBgToggle.Bounds = new Rectangle(innerX + innerW - toggleW, innerY, toggleW, topBarH);
-            btnLayoutToggle.Bounds = new Rectangle(innerX + innerW - toggleW * 2 - margin, innerY, toggleW, topBarH);
-            lblTitle.Bounds = new Rectangle(innerX, innerY, innerW - toggleW * 2 - margin * 2, topBarH);
-
-
-            // ★★★ メインロジック: 横か縦かでボタンエリアの開始位置を決定 ★★★
             int contentTop;
+            if (_isVertical) contentTop = innerY + (H / 2);
+            else contentTop = innerY + topBarH + margin;
 
-            if (_isVertical)
-            {
-                // 縦モード (分割): 上半分(50%)をゲーム画面用に空ける
-                contentTop = innerY + (H / 2);
-            }
-            else
-            {
-                // 横モード (全面): トップバーのすぐ下から開始
-                contentTop = innerY + topBarH + margin;
-            }
-
-            // このコードブロックの実行によって、ボタン配置が横画面/縦画面それぞれで要求された動作になります。
-
-            // --- ボタン配置計算 ---
             int availH = H - pad - contentTop;
 
-            // 1. OBSボタン
+            // 1. OBS
             int yObs = contentTop;
-            btnObsShow.Bounds = new Rectangle(innerX, yObs, (innerW - margin) / 2, stdH);
-            btnObsHide.Bounds = new Rectangle(innerX + (innerW - margin) / 2 + margin, yObs, (innerW - margin) / 2, stdH);
+            if (btnObsShow != null) btnObsShow.Bounds = new Rectangle(innerX, yObs, (innerW - margin) / 2, stdH);
+            if (btnObsHide != null) btnObsHide.Bounds = new Rectangle(innerX + (innerW - margin) / 2 + margin, yObs, (innerW - margin) / 2, stdH);
 
-            // 2. ショルダーボタン
+            // 2. ショルダー
             int ySh = yObs + stdH + margin;
             int shW = (innerW - margin * 4) / 5;
-            btnZL.Bounds = new Rectangle(innerX, ySh, shW, stdH);
-            btnL.Bounds = new Rectangle(innerX + shW + margin, ySh, shW, stdH);
-            btnLR.Bounds = new Rectangle(innerX + (shW + margin) * 2, ySh, shW, stdH);
-            btnR.Bounds = new Rectangle(innerX + (shW + margin) * 3, ySh, shW, stdH);
-            btnZR.Bounds = new Rectangle(innerX + (shW + margin) * 4, ySh, shW, stdH);
+            if (btnZL != null) btnZL.Bounds = new Rectangle(innerX, ySh, shW, stdH);
+            if (btnL != null) btnL.Bounds = new Rectangle(innerX + shW + margin, ySh, shW, stdH);
+            if (btnLR != null) btnLR.Bounds = new Rectangle(innerX + (shW + margin) * 2, ySh, shW, stdH);
+            if (btnR != null) btnR.Bounds = new Rectangle(innerX + (shW + margin) * 3, ySh, shW, stdH);
+            if (btnZR != null) btnZR.Bounds = new Rectangle(innerX + (shW + margin) * 4, ySh, shW, stdH);
 
-            // 5. 一番下：L3/R3
+            // 5. L3/R3
             int yStick = H - pad - stdH;
             int stickW = (innerW - margin) / 2;
             int stickH = stdH;
@@ -337,22 +427,21 @@ namespace SwitchRemoteGUI
                 yStick = H - pad - stickH;
             }
 
-            btnL3.Bounds = new Rectangle(innerX, yStick, stickW, stickH);
-            btnR3.Bounds = new Rectangle(innerX + stickW + margin, yStick, stickW, stickH);
+            if (btnL3 != null) btnL3.Bounds = new Rectangle(innerX, yStick, stickW, stickH);
+            if (btnR3 != null) btnR3.Bounds = new Rectangle(innerX + stickW + margin, yStick, stickW, stickH);
 
-            // 4. その上：システムボタン
+            // 4. システム
             int ySys = yStick - margin - stdH;
             int sysW = (innerW - margin * 3) / 4;
-            btnMinus.Bounds = new Rectangle(innerX, ySys, sysW, stdH);
-            btnHome.Bounds = new Rectangle(innerX + sysW + margin, ySys, sysW, stdH);
-            btnCap.Bounds = new Rectangle(innerX + (sysW + margin) * 2, ySys, sysW, stdH);
-            btnPlus.Bounds = new Rectangle(innerX + (sysW + margin) * 3, ySys, sysW, stdH);
+            if (btnMinus != null) btnMinus.Bounds = new Rectangle(innerX, ySys, sysW, stdH);
+            if (btnHome != null) btnHome.Bounds = new Rectangle(innerX + sysW + margin, ySys, sysW, stdH);
+            if (btnCap != null) btnCap.Bounds = new Rectangle(innerX + (sysW + margin) * 2, ySys, sysW, stdH);
+            if (btnPlus != null) btnPlus.Bounds = new Rectangle(innerX + (sysW + margin) * 3, ySys, sysW, stdH);
 
-            // 3. 中央：十字キー & ABXY
+            // 3. 中央
             int yMainTop = ySh + stdH + margin;
             int yMainBottom = ySys - margin;
             int mainH = yMainBottom - yMainTop;
-
             if (mainH < 50) mainH = 50;
 
             int btnSize = Math.Min((innerW / 2 - margin) / 3, mainH / 3);
@@ -360,18 +449,17 @@ namespace SwitchRemoteGUI
 
             int leftCenterX = innerX + innerW / 4;
             int mainCenterY = yMainTop + mainH / 2;
-            btnUp.Bounds = new Rectangle(leftCenterX - btnSize / 2, mainCenterY - btnSize / 2 - btnSize, btnSize, btnSize);
-            btnLeft.Bounds = new Rectangle(leftCenterX - btnSize / 2 - btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
-            btnRight.Bounds = new Rectangle(leftCenterX - btnSize / 2 + btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
-            btnDown.Bounds = new Rectangle(leftCenterX - btnSize / 2, mainCenterY - btnSize / 2 + btnSize, btnSize, btnSize);
+            if (btnUp != null) btnUp.Bounds = new Rectangle(leftCenterX - btnSize / 2, mainCenterY - btnSize / 2 - btnSize, btnSize, btnSize);
+            if (btnLeft != null) btnLeft.Bounds = new Rectangle(leftCenterX - btnSize / 2 - btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
+            if (btnRight != null) btnRight.Bounds = new Rectangle(leftCenterX - btnSize / 2 + btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
+            if (btnDown != null) btnDown.Bounds = new Rectangle(leftCenterX - btnSize / 2, mainCenterY - btnSize / 2 + btnSize, btnSize, btnSize);
 
             int rightCenterX = innerX + innerW * 3 / 4;
-            btnX.Bounds = new Rectangle(rightCenterX - btnSize / 2, mainCenterY - btnSize / 2 - btnSize, btnSize, btnSize);
-            btnY.Bounds = new Rectangle(rightCenterX - btnSize / 2 - btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
-            btnA.Bounds = new Rectangle(rightCenterX - btnSize / 2 + btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
-            btnB.Bounds = new Rectangle(rightCenterX - btnSize / 2, mainCenterY - btnSize / 2 + btnSize, btnSize, btnSize);
+            if (btnX != null) btnX.Bounds = new Rectangle(rightCenterX - btnSize / 2, mainCenterY - btnSize / 2 - btnSize, btnSize, btnSize);
+            if (btnY != null) btnY.Bounds = new Rectangle(rightCenterX - btnSize / 2 - btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
+            if (btnA != null) btnA.Bounds = new Rectangle(rightCenterX - btnSize / 2 + btnSize, mainCenterY - btnSize / 2, btnSize, btnSize);
+            if (btnB != null) btnB.Bounds = new Rectangle(rightCenterX - btnSize / 2, mainCenterY - btnSize / 2 + btnSize, btnSize, btnSize);
 
-            // フォント調整
             Font fontMain = new Font("Arial", Math.Max(10, btnSize / 3), FontStyle.Bold);
             Font fontSub = new Font("Arial", 9, FontStyle.Bold);
 
@@ -384,6 +472,7 @@ namespace SwitchRemoteGUI
                     c.Font = isMain ? fontMain : fontSub;
                 }
             }
+            this.TopMost = true;
         }
 
         private void Form1_KeyDown(object sender, KeyEventArgs e)
@@ -415,6 +504,26 @@ namespace SwitchRemoteGUI
         {
             if (port != null && port.IsOpen) port.Close();
             base.OnFormClosed(e);
+        }
+
+        void ConnectPort()
+        {
+            try { port = new SerialPort(portName, 9600); port.Open(); } catch { }
+        }
+
+        void ControlApp(string keyword, bool show)
+        {
+            Process[] processList = Process.GetProcesses();
+            foreach (Process p in processList)
+            {
+                if (!string.IsNullOrEmpty(p.MainWindowTitle) &&
+                   (p.ProcessName.ToLower().Contains(keyword) || p.MainWindowTitle.ToLower().Contains(keyword)))
+                {
+                    if (show) { if (IsIconic(p.MainWindowHandle)) ShowWindowAsync(p.MainWindowHandle, SW_RESTORE); SetForegroundWindow(p.MainWindowHandle); }
+                    else ShowWindowAsync(p.MainWindowHandle, SW_MINIMIZE);
+                    return;
+                }
+            }
         }
     }
 }
