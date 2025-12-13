@@ -11,9 +11,7 @@ namespace SwitchRemoteGUI
 {
     public partial class Form1 : Form
     {
-        // ★設定必須項目
         string portName = "COM5";
-
         SerialPort? port;
 
         // --- Windows API ---
@@ -26,34 +24,38 @@ namespace SwitchRemoteGUI
         private const int SW_RESTORE = 9;
         private const int SW_MINIMIZE = 6;
 
-        // 状態
         bool _isReady = false;
         bool _isSolidBlack = false;
         int _rotationAngle = 0;
+        bool _isHoldMode = true; // 連射モード
+        bool _isMenuOpen = false; // メニュー開閉
 
-        // ★追加: ホールド(連射)モード管理フラグ (初期値: ON = 長押し可能)
-        bool _isHoldMode = true;
-
-        // 連射・送信制御
         System.Windows.Forms.Timer _repeatTimer;
         string _repeatingCmd = "";
         DateTime _lastSendTime = DateTime.MinValue;
         private const int SEND_INTERVAL = 400;
 
-        // UIパーツ
+        // メイン画面パーツ
         RotatableButton? btnLayoutToggle;
         RotatableButton? btnBgToggle;
         RotatableLabel? lblTitle;
+        RotatableButton? btnMenu;
 
-        // ★追加: ホールド切替ボタン
+        // ★メイン画面にはHoldボタンのみ残す
         RotatableButton? btnHoldToggle;
 
-        RotatableButton? btnObsShow, btnObsHide;
-        RotatableButton? btnZL, btnL, btnLR, btnR, btnZR;
+        RotatableButton? btnZL, btnL, btnR, btnZR;
         RotatableButton? btnUp, btnLeft, btnDown, btnRight;
         RotatableButton? btnX, btnY, btnB, btnA;
         RotatableButton? btnMinus, btnHome, btnCap, btnPlus;
         RotatableButton? btnL3, btnR3;
+
+        // メニュー内パーツ (OBSボタンはこちらへ)
+        Panel? pnlMenu;
+        RotatableButton? mBtnLR;
+        RotatableButton? mBtnObs, mBtnHide; // ★追加
+        RotatableButton? mBtnRot, mBtnTrans;
+        RotatableButton? mBtnFull, mBtnClose;
 
         private int resizeGrip = 10;
         private int borderSize = 2;
@@ -97,23 +99,13 @@ namespace SwitchRemoteGUI
         {
             if (port != null && port.IsOpen)
             {
-                // コマンド回転ロジック
                 string finalCmd = RotateCommand(cmd);
-
                 double msSinceLast = (DateTime.Now - _lastSendTime).TotalMilliseconds;
                 if (!force && msSinceLast < SEND_INTERVAL) return;
-
-                try
-                {
-                    port.DiscardOutBuffer();
-                    port.Write(finalCmd);
-                    _lastSendTime = DateTime.Now;
-                }
-                catch { }
+                try { port.DiscardOutBuffer(); port.Write(finalCmd); _lastSendTime = DateTime.Now; } catch { }
             }
         }
 
-        // コマンド回転
         string RotateCommand(string cmd)
         {
             if (_rotationAngle == 0) return cmd;
@@ -124,10 +116,7 @@ namespace SwitchRemoteGUI
             return cmd;
         }
 
-        void ClearBuffer()
-        {
-            if (port != null && port.IsOpen) try { port.DiscardOutBuffer(); } catch { }
-        }
+        void ClearBuffer() { if (port != null && port.IsOpen) try { port.DiscardOutBuffer(); } catch { } }
 
         void ControlApp(string keyword, bool show)
         {
@@ -137,73 +126,74 @@ namespace SwitchRemoteGUI
                 if (!string.IsNullOrEmpty(p.MainWindowTitle) &&
                    (p.ProcessName.ToLower().Contains(keyword) || p.MainWindowTitle.ToLower().Contains(keyword)))
                 {
-                    if (show)
-                    {
-                        if (IsIconic(p.MainWindowHandle)) ShowWindowAsync(p.MainWindowHandle, SW_RESTORE);
-                        SetForegroundWindow(p.MainWindowHandle);
-                    }
+                    if (show) { if (IsIconic(p.MainWindowHandle)) ShowWindowAsync(p.MainWindowHandle, SW_RESTORE); SetForegroundWindow(p.MainWindowHandle); }
                     else ShowWindowAsync(p.MainWindowHandle, SW_MINIMIZE);
                     return;
                 }
             }
         }
 
+        // --- 特殊機能 ---
+        void ToggleMenu()
+        {
+            _isMenuOpen = !_isMenuOpen;
+            if (pnlMenu != null)
+            {
+                pnlMenu.Visible = _isMenuOpen;
+                if (_isMenuOpen)
+                {
+                    pnlMenu.BringToFront();
+                }
+                UpdateLayout();
+            }
+        }
+
         void RotateLayout()
         {
             _rotationAngle = (_rotationAngle + 90) % 360;
-            int currentW = this.Width;
-            int currentH = this.Height;
-            this.Size = new Size(currentH, currentW);
-
-            if (btnLayoutToggle != null) btnLayoutToggle.Text = $"↻ {_rotationAngle}°";
+            if (this.WindowState == FormWindowState.Normal)
+            {
+                int currentW = this.Width;
+                int currentH = this.Height;
+                this.Size = new Size(currentH, currentW);
+            }
+            if (mBtnRot != null) mBtnRot.Text = $"Rot: {_rotationAngle}°";
             UpdateLayout();
         }
 
         void ToggleBlackMode()
         {
-            if (_isSolidBlack) { SetTransparentMode(); if (btnBgToggle != null) btnBgToggle.Text = "透過"; }
-            else { SetSolidBlackMode(); if (btnBgToggle != null) btnBgToggle.Text = "黒"; }
-            if (btnBgToggle != null) btnBgToggle.BackColor = _isSolidBlack ? Color.FromArgb(100, 100, 100) : Color.FromArgb(70, 70, 70);
+            if (_isSolidBlack) { SetTransparentMode(); if (mBtnTrans != null) mBtnTrans.Text = "Trans"; }
+            else { SetSolidBlackMode(); if (mBtnTrans != null) mBtnTrans.Text = "Black"; }
+            if (mBtnTrans != null) mBtnTrans.BackColor = _isSolidBlack ? Color.Gray : Color.LightGray;
             this.TopMost = true;
         }
 
-        // ★追加: ホールドモード切替処理
         void ToggleHoldMode()
         {
             _isHoldMode = !_isHoldMode;
             if (btnHoldToggle != null)
             {
-                // 表示切り替え
-                if (_isHoldMode)
-                {
-                    btnHoldToggle.Text = "Hold: ON";
-                    btnHoldToggle.BackColor = Color.LightGreen; // わかりやすく緑に
-                }
-                else
-                {
-                    btnHoldToggle.Text = "Hold: OFF";
-                    btnHoldToggle.BackColor = Color.LightSalmon; // OFFは赤っぽく
-                }
+                btnHoldToggle.Text = _isHoldMode ? "Hold: ON" : "Hold: OFF";
+                btnHoldToggle.BackColor = _isHoldMode ? Color.LightGreen : Color.LightSalmon;
             }
         }
 
-        void SetTransparentMode()
+        void ToggleMaximize()
         {
-            this.TransparencyKey = Color.Magenta;
-            this.BackColor = Color.Magenta;
-            this.Opacity = 0.70;
-            _isSolidBlack = false;
-            this.Invalidate();
+            if (this.WindowState == FormWindowState.Maximized)
+                this.WindowState = FormWindowState.Normal;
+            else
+                this.WindowState = FormWindowState.Maximized;
+
+            _isMenuOpen = false;
+            if (pnlMenu != null) pnlMenu.Visible = false;
+
+            UpdateLayout();
         }
 
-        void SetSolidBlackMode()
-        {
-            this.TransparencyKey = Color.Empty;
-            this.BackColor = Color.Black;
-            this.Opacity = 1.0;
-            _isSolidBlack = true;
-            this.Invalidate();
-        }
+        void SetTransparentMode() { this.TransparencyKey = Color.Magenta; this.BackColor = Color.Magenta; this.Opacity = 0.70; _isSolidBlack = false; this.Invalidate(); }
+        void SetSolidBlackMode() { this.TransparencyKey = Color.Empty; this.BackColor = Color.Black; this.Opacity = 1.0; _isSolidBlack = true; this.Invalidate(); }
 
         private void Form1_Paint(object sender, PaintEventArgs e)
         {
@@ -219,7 +209,7 @@ namespace SwitchRemoteGUI
         {
             const int WM_NCHITTEST = 0x84;
             base.WndProc(ref m);
-            if (m.Msg == WM_NCHITTEST)
+            if (m.Msg == WM_NCHITTEST && !_isMenuOpen)
             {
                 Point pos = this.PointToClient(new Point(m.LParam.ToInt32()));
                 if (pos.X <= resizeGrip && pos.Y <= resizeGrip) m.Result = (IntPtr)13;
@@ -238,15 +228,16 @@ namespace SwitchRemoteGUI
             if (e.Button == MouseButtons.Left) { ReleaseCapture(); SendMessage(Handle, 0xA1, 0x2, 0); }
         }
 
-        protected override void OnResize(EventArgs e)
-        {
-            base.OnResize(e);
-            this.Invalidate();
-            UpdateLayout();
-        }
+        protected override void OnResize(EventArgs e) { base.OnResize(e); this.Invalidate(); UpdateLayout(); }
 
         void CreateUI()
         {
+            // メニューパネル
+            pnlMenu = new Panel();
+            pnlMenu.BackColor = Color.FromArgb(220, 30, 30, 30);
+            pnlMenu.Visible = false;
+            this.Controls.Add(pnlMenu);
+
             lblTitle = new RotatableLabel();
             lblTitle.Text = ":: Switch Remote ::";
             lblTitle.TextAlign = ContentAlignment.MiddleCenter;
@@ -256,118 +247,79 @@ namespace SwitchRemoteGUI
             lblTitle.MouseDown += TopBar_MouseDown;
             this.Controls.Add(lblTitle);
 
-            btnLayoutToggle = new RotatableButton();
-            btnLayoutToggle.Text = "↻ 0°";
-            btnLayoutToggle.BackColor = Color.FromArgb(70, 70, 70);
+            // ヘルパー
+            RotatableButton MkBtn(Control parent, string txt, Color? bg, EventHandler click)
+            {
+                RotatableButton b = new RotatableButton();
+                b.Text = txt;
+                b.BackColor = bg ?? Color.White;
+                b.FlatStyle = FlatStyle.Flat;
+                b.FlatAppearance.BorderSize = 0;
+                b.TabStop = false;
+                b.Click += click;
+                parent.Controls.Add(b);
+                return b;
+            }
+
+            RotatableButton MkGame(string txt, string cmd, bool isRepeat, Color? bg = null)
+            {
+                RotatableButton b = new RotatableButton();
+                b.Text = txt;
+                b.BackColor = bg ?? Color.White;
+                b.FlatStyle = FlatStyle.Flat;
+                b.FlatAppearance.BorderSize = 0;
+                b.TabStop = false;
+                b.MouseDown += (s, e) => { if (isRepeat || _isHoldMode) { _repeatingCmd = cmd; Send(cmd, true); _repeatTimer.Start(); } else { Send(cmd, false); } };
+                b.MouseUp += (s, e) => { if (isRepeat || _isHoldMode) { _repeatTimer.Stop(); _repeatingCmd = ""; } ClearBuffer(); };
+                this.Controls.Add(b);
+                return b;
+            }
+
+            // --- メイン画面 ---
+            btnLayoutToggle = MkBtn(this, "↻ 0°", Color.FromArgb(70, 70, 70), (s, e) => RotateLayout());
             btnLayoutToggle.ForeColor = Color.White;
-            btnLayoutToggle.FlatStyle = FlatStyle.Flat;
-            btnLayoutToggle.FlatAppearance.BorderSize = 0;
-            btnLayoutToggle.TabStop = false;
-            btnLayoutToggle.Click += (s, e) => RotateLayout();
-            this.Controls.Add(btnLayoutToggle);
 
-            btnBgToggle = new RotatableButton();
-            btnBgToggle.Text = "⚫ 透過";
-            btnBgToggle.BackColor = Color.FromArgb(70, 70, 70);
+            btnBgToggle = MkBtn(this, "透過", Color.FromArgb(70, 70, 70), (s, e) => ToggleBlackMode());
             btnBgToggle.ForeColor = Color.White;
-            btnBgToggle.FlatStyle = FlatStyle.Flat;
-            btnBgToggle.FlatAppearance.BorderSize = 0;
-            btnBgToggle.TabStop = false;
-            btnBgToggle.Click += (s, e) => ToggleBlackMode();
-            this.Controls.Add(btnBgToggle);
 
-            RotatableButton MkControlBtn(string txt, string keyword, bool show, Color? bg = null)
-            {
-                RotatableButton b = new RotatableButton();
-                b.Text = txt;
-                b.BackColor = bg ?? Color.White;
-                b.FlatStyle = FlatStyle.Flat;
-                b.FlatAppearance.BorderSize = 0;
-                b.TabStop = false;
-                b.Click += (s, e) => ControlApp(keyword, show);
-                this.Controls.Add(b);
-                return b;
-            }
+            // ★ Holdボタン (メイン)
+            btnHoldToggle = MkBtn(this, "Hold: ON", Color.LightGreen, (s, e) => ToggleHoldMode());
 
-            // ゲームボタン生成（ホールドモード対応）
-            RotatableButton MkGameBtn(string txt, string cmd, bool isRepeat, Color? bg = null)
-            {
-                RotatableButton b = new RotatableButton();
-                b.Text = txt;
-                b.BackColor = bg ?? Color.White;
-                b.FlatStyle = FlatStyle.Flat;
-                b.FlatAppearance.BorderSize = 0;
-                b.TabStop = false;
-
-                b.MouseDown += (s, e) => {
-                    // ★修正: _isHoldModeがONなら全ボタン連射(ホールド)有効。OFFなら全ボタン単発。
-                    // 元の isRepeat 引数はここでは無視して、モード設定を優先します。
-                    bool doRepeat = _isHoldMode;
-
-                    if (doRepeat)
-                    {
-                        _repeatingCmd = cmd;
-                        Send(cmd, true);
-                        _repeatTimer.Start();
-                    }
-                    else
-                    {
-                        Send(cmd, false);
-                    }
-                };
-
-                b.MouseUp += (s, e) => {
-                    // 連射モードならタイマーを止める
-                    if (_isHoldMode)
-                    {
-                        _repeatTimer.Stop();
-                        _repeatingCmd = "";
-                    }
-                    ClearBuffer();
-                };
-                this.Controls.Add(b);
-                return b;
-            }
-
-            // ★追加: Hold切替ボタン
-            btnHoldToggle = new RotatableButton();
-            btnHoldToggle.Text = "Hold: ON"; // 初期状態
-            btnHoldToggle.BackColor = Color.LightGreen;
-            btnHoldToggle.ForeColor = Color.Black;
-            btnHoldToggle.FlatStyle = FlatStyle.Flat;
-            btnHoldToggle.FlatAppearance.BorderSize = 0;
-            btnHoldToggle.TabStop = false;
-            btnHoldToggle.Click += (s, e) => ToggleHoldMode();
-            this.Controls.Add(btnHoldToggle);
-
-            // OBSボタン (既存)
-            btnObsShow = MkControlBtn("📺 OBS", "obs", true, Color.LightSkyBlue);
-            btnObsHide = MkControlBtn("Hide", "obs", false, Color.LightGray);
+            // メニューボタン
+            btnMenu = MkBtn(this, "MENU", Color.Orange, (s, e) => ToggleMenu());
 
             // ゲームボタン
-            btnZL = MkGameBtn("ZL", "e", false, Color.DarkGray);
-            btnL = MkGameBtn("L", "q", false, Color.Gray);
-            btnLR = MkGameBtn("LR", "qw", false, Color.Orange);
-            btnR = MkGameBtn("R", "w", false, Color.Gray);
-            btnZR = MkGameBtn("ZR", "r", false, Color.DarkGray);
+            btnZL = MkGame("ZL", "e", false, Color.DarkGray);
+            btnL = MkGame("L", "q", false, Color.Gray);
+            btnR = MkGame("R", "w", false, Color.Gray);
+            btnZR = MkGame("ZR", "r", false, Color.DarkGray);
 
-            btnUp = MkGameBtn("↑", "I", true);
-            btnLeft = MkGameBtn("←", "J", true);
-            btnDown = MkGameBtn("↓", "K", true);
-            btnRight = MkGameBtn("→", "L", true);
+            btnUp = MkGame("↑", "I", true);
+            btnLeft = MkGame("←", "J", true);
+            btnDown = MkGame("↓", "K", true);
+            btnRight = MkGame("→", "L", true);
 
-            btnX = MkGameBtn("X", "s", false, Color.Yellow);
-            btnY = MkGameBtn("Y", "a", false, Color.LightGreen);
-            btnB = MkGameBtn("B", "x", false, Color.Red);
-            btnA = MkGameBtn("A", "z", false, Color.Cyan);
+            btnX = MkGame("X", "s", false, Color.Yellow);
+            btnY = MkGame("Y", "a", false, Color.LightGreen);
+            btnB = MkGame("B", "x", false, Color.Red);
+            btnA = MkGame("A", "z", false, Color.Cyan);
 
-            btnMinus = MkGameBtn("-", "m", false, Color.LightGray);
-            btnHome = MkGameBtn("Home", "h", false, Color.LightBlue);
-            btnCap = MkGameBtn("Capture", "c", false, Color.Pink);
-            btnPlus = MkGameBtn("+", "n", false, Color.LightGray);
+            btnMinus = MkGame("-", "m", false, Color.LightGray);
+            btnHome = MkGame("Home", "h", false, Color.LightBlue);
+            btnCap = MkGame("Cap", "c", false, Color.Pink);
+            btnPlus = MkGame("+", "n", false, Color.LightGray);
 
-            btnL3 = MkGameBtn("L3", "3", false, Color.Silver);
-            btnR3 = MkGameBtn("R3", "4", false, Color.Silver);
+            btnL3 = MkGame("L3", "3", false, Color.Silver);
+            btnR3 = MkGame("R3", "4", false, Color.Silver);
+
+            // --- メニュー内 ---
+            mBtnLR = MkBtn(pnlMenu, "LR Push", Color.Orange, (s, e) => { Send("qw"); ToggleMenu(); });
+            mBtnObs = MkBtn(pnlMenu, "OBS", Color.LightSkyBlue, (s, e) => { ControlApp("obs", true); ToggleMenu(); });
+            mBtnHide = MkBtn(pnlMenu, "Hide", Color.LightGray, (s, e) => { ControlApp("obs", false); ToggleMenu(); });
+            mBtnRot = MkBtn(pnlMenu, "Rotate", Color.White, (s, e) => { RotateLayout(); ToggleMenu(); });
+            mBtnTrans = MkBtn(pnlMenu, "Trans", Color.LightGray, (s, e) => { ToggleBlackMode(); ToggleMenu(); });
+            mBtnFull = MkBtn(pnlMenu, "Full / Win", Color.LightCoral, (s, e) => { ToggleMaximize(); });
+            mBtnClose = MkBtn(pnlMenu, "Close Menu", Color.Silver, (s, e) => ToggleMenu());
         }
 
         void UpdateLayout()
@@ -383,15 +335,27 @@ namespace SwitchRemoteGUI
             int topBarH = 24;
             int margin = 5;
 
+            // メニューパネルもサイズ追従
+            if (pnlMenu != null) pnlMenu.Bounds = new Rectangle(innerX, innerY, innerW, H - pad * 2);
+
+            if (_isMenuOpen)
+            {
+                UpdateMenuLayout(innerW, H - pad * 2);
+                // メニューが開いていてもメイン計算は回す（最大化反映のため）
+            }
+
             int contentY = innerY + topBarH + margin;
             int contentH = H - pad - contentY;
 
             var rects = new System.Collections.Generic.Dictionary<Control, Rectangle>();
 
+            // タイトルバー
+            if (lblTitle != null) rects[lblTitle] = new Rectangle(innerX, innerY, innerW, topBarH);
+
+            // トップバーのボタン (回転・透過)
             int toggleW = (innerW - margin) / 4;
             if (btnBgToggle != null) rects[btnBgToggle] = new Rectangle(innerX + innerW - toggleW, innerY, toggleW, topBarH);
             if (btnLayoutToggle != null) rects[btnLayoutToggle] = new Rectangle(innerX + innerW - toggleW * 2 - margin, innerY, toggleW, topBarH);
-            if (lblTitle != null) rects[lblTitle] = new Rectangle(innerX, innerY, innerW - toggleW * 2 - margin * 2, topBarH);
 
             int btnBaseSize = 30;
 
@@ -401,20 +365,17 @@ namespace SwitchRemoteGUI
                 int rowH = contentH / 14;
                 int y = contentY;
 
-                // 1. OBS & Hold (3ボタンに分割)
-                int obsH = Math.Max(30, rowH);
-                int btnW = (innerW - margin * 2) / 3;
-                if (btnObsShow != null) rects[btnObsShow] = new Rectangle(innerX, y, btnW, obsH);
-                if (btnObsHide != null) rects[btnObsHide] = new Rectangle(innerX + btnW + margin, y, btnW, obsH);
-                if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX + (btnW + margin) * 2, y, btnW, obsH);
-                y += obsH + margin;
+                // 1. Hold (1つだけ大きく)
+                int holdH = Math.Max(30, rowH);
+                if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX, y, innerW, holdH);
+                y += holdH + margin;
 
-                // 2. ショルダー
+                // 2. ショルダー (ZL, L, MENU, R, ZR)
                 int shH = Math.Max(40, rowH * 2);
                 int shW = (innerW - margin * 4) / 5;
                 if (btnZL != null) rects[btnZL] = new Rectangle(innerX, y, shW, shH);
                 if (btnL != null) rects[btnL] = new Rectangle(innerX + shW + margin, y, shW, shH);
-                if (btnLR != null) rects[btnLR] = new Rectangle(innerX + (shW + margin) * 2, y, shW, shH);
+                if (btnMenu != null) rects[btnMenu] = new Rectangle(innerX + (shW + margin) * 2, y, shW, shH);
                 if (btnR != null) rects[btnR] = new Rectangle(innerX + (shW + margin) * 3, y, shW, shH);
                 if (btnZR != null) rects[btnZR] = new Rectangle(innerX + (shW + margin) * 4, y, shW, shH);
                 y += shH + margin;
@@ -457,42 +418,38 @@ namespace SwitchRemoteGUI
             // ★★★ 横レイアウト (0度 / 180度) ★★★
             else
             {
-                int obsH = (int)(contentH * 0.10);
-                int shoulderH = (int)(contentH * 0.12);
+                int holdH = (int)(contentH * 0.10);
+                int shoulderH = (int)(contentH * 0.15);
                 int stickH = (int)(contentH * 0.12);
                 int systemH = (int)(contentH * 0.10);
 
-                if (obsH < 25) obsH = 25;
-                if (shoulderH < 30) shoulderH = 30;
+                if (holdH < 25) holdH = 25;
+                if (shoulderH < 40) shoulderH = 40;
                 if (stickH < 30) stickH = 30;
                 if (systemH < 30) systemH = 30;
 
-                int mainH = contentH - obsH - shoulderH - stickH - systemH - (margin * 4);
+                int mainH = contentH - holdH - shoulderH - stickH - systemH - (margin * 4);
                 if (mainH < 80) mainH = 80;
 
-                int yObs = contentY;
-                int ySh = yObs + obsH + margin;
+                int yHold = contentY;
+                int ySh = yHold + holdH + margin;
                 int yMain = ySh + shoulderH + margin;
                 int ySys = yMain + mainH + margin;
                 int yStick = ySys + systemH + margin;
 
-                // OBS & Hold (3ボタン)
-                int btnW = (innerW - margin * 2) / 3;
-                if (btnObsShow != null) rects[btnObsShow] = new Rectangle(innerX, yObs, btnW, obsH);
-                if (btnObsHide != null) rects[btnObsHide] = new Rectangle(innerX + btnW + margin, yObs, btnW, obsH);
-                if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX + (btnW + margin) * 2, yObs, btnW, obsH);
+                // 1. Hold (1つだけ)
+                if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX, yHold, innerW, holdH);
 
-                // ショルダー
+                // 2. ショルダー
                 int shW = (innerW - margin * 4) / 5;
                 if (btnZL != null) rects[btnZL] = new Rectangle(innerX, ySh, shW, shoulderH);
                 if (btnL != null) rects[btnL] = new Rectangle(innerX + shW + margin, ySh, shW, shoulderH);
-                if (btnLR != null) rects[btnLR] = new Rectangle(innerX + (shW + margin) * 2, ySh, shW, shoulderH);
+                if (btnMenu != null) rects[btnMenu] = new Rectangle(innerX + (shW + margin) * 2, ySh, shW, shoulderH);
                 if (btnR != null) rects[btnR] = new Rectangle(innerX + (shW + margin) * 3, ySh, shW, shoulderH);
                 if (btnZR != null) rects[btnZR] = new Rectangle(innerX + (shW + margin) * 4, ySh, shW, shoulderH);
 
                 // メイン
                 int leftAreaW = innerW / 2;
-                int rightAreaW = innerW - leftAreaW;
                 btnBaseSize = Math.Min(mainH / 3, (leftAreaW - margin * 2) / 3);
 
                 int leftCenterX = innerX + leftAreaW / 2;
@@ -502,18 +459,20 @@ namespace SwitchRemoteGUI
                 if (btnRight != null) rects[btnRight] = new Rectangle(leftCenterX - btnBaseSize / 2 + btnBaseSize, mainCenterY - btnBaseSize / 2, btnBaseSize, btnBaseSize);
                 if (btnDown != null) rects[btnDown] = new Rectangle(leftCenterX - btnBaseSize / 2, mainCenterY - btnBaseSize / 2 + btnBaseSize, btnBaseSize, btnBaseSize);
 
-                int rightCenterX = innerX + leftAreaW + rightAreaW / 2;
+                int rightCenterX = innerX + leftAreaW + (innerW - leftAreaW) / 2;
                 if (btnX != null) rects[btnX] = new Rectangle(rightCenterX - btnBaseSize / 2, mainCenterY - btnBaseSize / 2 - btnBaseSize, btnBaseSize, btnBaseSize);
                 if (btnY != null) rects[btnY] = new Rectangle(rightCenterX - btnBaseSize / 2 - btnBaseSize, mainCenterY - btnBaseSize / 2, btnBaseSize, btnBaseSize);
                 if (btnA != null) rects[btnA] = new Rectangle(rightCenterX - btnBaseSize / 2 + btnBaseSize, mainCenterY - btnBaseSize / 2, btnBaseSize, btnBaseSize);
                 if (btnB != null) rects[btnB] = new Rectangle(rightCenterX - btnBaseSize / 2, mainCenterY - btnBaseSize / 2 + btnBaseSize, btnBaseSize, btnBaseSize);
 
+                // システム
                 int sysW = (innerW - margin * 3) / 4;
                 if (btnMinus != null) rects[btnMinus] = new Rectangle(innerX, ySys, sysW, systemH);
                 if (btnHome != null) rects[btnHome] = new Rectangle(innerX + sysW + margin, ySys, sysW, systemH);
                 if (btnCap != null) rects[btnCap] = new Rectangle(innerX + (sysW + margin) * 2, ySys, sysW, systemH);
                 if (btnPlus != null) rects[btnPlus] = new Rectangle(innerX + (sysW + margin) * 3, ySys, sysW, systemH);
 
+                // スティック
                 int stickW = (innerW - margin) / 2;
                 if (btnL3 != null) rects[btnL3] = new Rectangle(innerX, yStick, stickW, stickH);
                 if (btnR3 != null) rects[btnR3] = new Rectangle(innerX + stickW + margin, yStick, stickW, stickH);
@@ -531,7 +490,6 @@ namespace SwitchRemoteGUI
                 if (c is RotatableButton rb) rb.RotationAngle = _rotationAngle;
                 if (c is RotatableLabel rl) rl.RotationAngle = _rotationAngle;
 
-                // 180度, 270度 は反転
                 if (_rotationAngle == 180 || _rotationAngle == 270)
                 {
                     r = new Rectangle(W - r.X - r.Width, H - r.Y - r.Height, r.Width, r.Height);
@@ -540,12 +498,45 @@ namespace SwitchRemoteGUI
 
                 if (c is Button)
                 {
-                    bool isMain = (c == btnUp || c == btnLeft || c == btnRight || c == btnDown ||
-                                   c == btnX || c == btnY || c == btnA || c == btnB);
+                    bool isMain = (c == btnUp || c == btnLeft || c == btnRight || c == btnDown || c == btnX || c == btnY || c == btnA || c == btnB);
                     c.Font = isMain ? fontMain : fontSub;
                 }
             }
             this.TopMost = true;
+        }
+
+        void UpdateMenuLayout(int w, int h)
+        {
+            if (pnlMenu == null) return;
+
+            int cols = 2;
+            int rows = 4;
+            int margin = 10;
+            int btnW = (w - margin * (cols + 1)) / cols;
+            int btnH = (h - margin * (rows + 1)) / rows;
+
+            // メニューボタン一覧
+            Control[] menuBtns = { mBtnLR, mBtnObs, mBtnHide, mBtnRot, mBtnTrans, mBtnFull, mBtnClose };
+
+            for (int i = 0; i < menuBtns.Length; i++)
+            {
+                if (menuBtns[i] == null) continue;
+                int r = i / cols;
+                int c = i % cols;
+
+                Rectangle rect = new Rectangle(margin + c * (btnW + margin), margin + r * (btnH + margin), btnW, btnH);
+
+                if (_rotationAngle == 180 || _rotationAngle == 270)
+                {
+                    rect = new Rectangle(w - rect.X - rect.Width, h - rect.Y - rect.Height, rect.Width, rect.Height);
+                }
+
+                menuBtns[i].Bounds = rect;
+                if (menuBtns[i] is RotatableButton rb) rb.RotationAngle = _rotationAngle;
+
+                float fSize = Math.Max(12, Math.Min(btnW, btnH) / 6);
+                menuBtns[i].Font = new Font("Arial", fSize, FontStyle.Bold);
+            }
         }
 
         private void Form1_KeyDown(object sender, KeyEventArgs e)
@@ -562,15 +553,12 @@ namespace SwitchRemoteGUI
         void ConnectPort() { try { port = new SerialPort(portName, 9600); port.Open(); } catch { } }
     }
 
-    // ボタンクラス（変更なし）
     public class RotatableButton : Button
     {
         public int RotationAngle { get; set; } = 0;
         public RotatableButton()
         {
-            this.SetStyle(ControlStyles.SupportsTransparentBackColor, true);
-            this.SetStyle(ControlStyles.Opaque, true);
-            this.SetStyle(ControlStyles.ResizeRedraw, true);
+            this.SetStyle(ControlStyles.SupportsTransparentBackColor | ControlStyles.Opaque | ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
             this.BackColor = Color.Transparent;
         }
         protected override CreateParams CreateParams { get { CreateParams cp = base.CreateParams; cp.ExStyle |= 0x20; return cp; } }
