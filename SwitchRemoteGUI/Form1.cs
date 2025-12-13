@@ -29,7 +29,7 @@ namespace SwitchRemoteGUI
         bool _isHoldMode = true;
         bool _isMenuOpen = false;
 
-        // ★修正: ウィンドウ全体の透明度 (初期値 0.3 = 30% うっすら)
+        // 透明度初期値 (30%)
         double _targetOpacity = 0.3;
 
         System.Windows.Forms.Timer _repeatTimer;
@@ -54,10 +54,12 @@ namespace SwitchRemoteGUI
         RotatableButton? mBtnObs, mBtnHide;
         RotatableButton? mBtnRot, mBtnTrans;
         RotatableButton? mBtnFull, mBtnClose;
-        RotatableButton? mBtnOp; // 透明度変更ボタン
+        RotatableButton? mBtnOp;
 
         private int resizeGrip = 10;
-        private int borderSize = 2;
+
+        // ★修正: パディングやボーダーをなくす
+        private int borderSize = 0;
         private const int BASE_W = 800;
         private const int BASE_H = 400;
 
@@ -73,9 +75,12 @@ namespace SwitchRemoteGUI
             _repeatTimer.Interval = SEND_INTERVAL;
             _repeatTimer.Tick += RepeatTimer_Tick;
 
+            // ★修正: パディングを0にする (紫の帯対策)
+            this.Padding = new Padding(0);
+
+            // 初期設定 (透過モード)
             SetTransparentMode();
 
-            this.Padding = new Padding(borderSize);
             this.KeyPreview = true;
             this.KeyDown += Form1_KeyDown;
             this.Paint += Form1_Paint;
@@ -186,33 +191,27 @@ namespace SwitchRemoteGUI
             UpdateLayout();
         }
 
-        // ★追加: 透明度切り替え機能
         void ToggleOpacity()
         {
-            // 10% -> 30% -> 50% -> 80% -> 100% -> 10% ...
             if (_targetOpacity < 0.2) _targetOpacity = 0.3;
             else if (_targetOpacity < 0.4) _targetOpacity = 0.5;
             else if (_targetOpacity < 0.7) _targetOpacity = 0.8;
             else if (_targetOpacity < 0.9) _targetOpacity = 1.0;
-            else _targetOpacity = 0.1; // 10% (かなり薄い)
+            else _targetOpacity = 0.1;
 
             if (mBtnOp != null) mBtnOp.Text = $"Op: {(int)(_targetOpacity * 100)}%";
-
-            // 透過モード中なら即適用
             if (!_isSolidBlack) this.Opacity = _targetOpacity;
         }
 
+        // ★★★ 修正: 黒背景＆黒透過で統一 ★★★
         void SetTransparentMode()
         {
-            // 透過キー色 (黒に近い色)
+            // 透過キーと背景色を「ほぼ黒」にする
             Color keyColor = Color.FromArgb(1, 1, 1);
             this.BackColor = keyColor;
             this.TransparencyKey = keyColor;
 
-            // ★重要: ここでウィンドウ全体の透明度を適用する
-            // これにより、ボタンも含めて全体が透けるようになる
             this.Opacity = _targetOpacity;
-
             _isSolidBlack = false;
             this.Invalidate();
         }
@@ -221,16 +220,19 @@ namespace SwitchRemoteGUI
         {
             this.TransparencyKey = Color.Empty;
             this.BackColor = Color.Black;
-            this.Opacity = 1.0; // 黒背景モードはくっきり表示
+            this.Opacity = 1.0;
             _isSolidBlack = true;
             this.Invalidate();
         }
 
         private void Form1_Paint(object sender, PaintEventArgs e)
         {
+            // 透過時は一切何も描画しない (枠線なし)
             if (!_isSolidBlack) return;
+
+            // 黒背景モード時は枠線を描く
             Color frameColor = Color.DarkGray;
-            using (Pen p = new Pen(frameColor, borderSize))
+            using (Pen p = new Pen(frameColor, 2)) // 固定幅
             {
                 p.Alignment = System.Drawing.Drawing2D.PenAlignment.Inset;
                 e.Graphics.DrawRectangle(p, this.ClientRectangle);
@@ -345,7 +347,6 @@ namespace SwitchRemoteGUI
             mBtnTrans = MkBtn(pnlMenu, "Trans", Color.LightGray, (s, e) => { ToggleBlackMode(); ToggleMenu(); });
             mBtnFull = MkBtn(pnlMenu, "Full / Win", Color.LightCoral, (s, e) => { ToggleMaximize(); });
 
-            // ★追加: 透明度変更ボタン
             mBtnOp = MkBtn(pnlMenu, $"Op: {(int)(_targetOpacity * 100)}%", Color.White, (s, e) => { ToggleOpacity(); });
 
             mBtnClose = MkBtn(pnlMenu, "Close Menu", Color.Silver, (s, e) => ToggleMenu());
@@ -357,16 +358,17 @@ namespace SwitchRemoteGUI
 
             int W = this.ClientSize.Width;
             int H = this.ClientSize.Height;
-            int pad = borderSize;
-            int innerW = W - pad * 2;
-            int innerX = pad;
-            int innerY = pad;
+            // ★修正: パディング計算を0にする
+            int pad = 0;
+            int innerW = W;
+            int innerX = 0;
+            int innerY = 0;
             int topBarH = 24;
             int margin = 5;
 
-            if (pnlMenu != null) pnlMenu.Bounds = new Rectangle(innerX, innerY, innerW, H - pad * 2);
+            if (pnlMenu != null) pnlMenu.Bounds = new Rectangle(0, 0, W, H);
 
-            if (_isMenuOpen) UpdateMenuLayout(innerW, H - pad * 2);
+            if (_isMenuOpen) UpdateMenuLayout(W, H);
 
             int contentY = innerY + topBarH + margin;
             int contentH = H - pad - contentY;
@@ -387,22 +389,22 @@ namespace SwitchRemoteGUI
                 int y = contentY;
 
                 int holdH = Math.Max(30, rowH);
-                if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX, y, innerW, holdH);
+                if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX + margin, y, innerW - margin * 2, holdH);
                 y += holdH + margin;
 
                 int shH = Math.Max(40, rowH * 2);
-                int shW = (innerW - margin * 4) / 5;
-                if (btnZL != null) rects[btnZL] = new Rectangle(innerX, y, shW, shH);
-                if (btnL != null) rects[btnL] = new Rectangle(innerX + shW + margin, y, shW, shH);
-                if (btnMenu != null) rects[btnMenu] = new Rectangle(innerX + (shW + margin) * 2, y, shW, shH);
-                if (btnR != null) rects[btnR] = new Rectangle(innerX + (shW + margin) * 3, y, shW, shH);
-                if (btnZR != null) rects[btnZR] = new Rectangle(innerX + (shW + margin) * 4, y, shW, shH);
+                int shW = (innerW - margin * 6) / 5;
+                if (btnZL != null) rects[btnZL] = new Rectangle(innerX + margin, y, shW, shH);
+                if (btnL != null) rects[btnL] = new Rectangle(innerX + margin + shW + margin, y, shW, shH);
+                if (btnMenu != null) rects[btnMenu] = new Rectangle(innerX + margin + (shW + margin) * 2, y, shW, shH);
+                if (btnR != null) rects[btnR] = new Rectangle(innerX + margin + (shW + margin) * 3, y, shW, shH);
+                if (btnZR != null) rects[btnZR] = new Rectangle(innerX + margin + (shW + margin) * 4, y, shW, shH);
                 y += shH + margin;
 
                 int stickH = Math.Max(30, rowH);
-                int stickW = (innerW - margin) / 2;
-                if (btnL3 != null) rects[btnL3] = new Rectangle(innerX, y, stickW, stickH);
-                if (btnR3 != null) rects[btnR3] = new Rectangle(innerX + stickW + margin, y, stickW, stickH);
+                int stickW = (innerW - margin * 3) / 2;
+                if (btnL3 != null) rects[btnL3] = new Rectangle(innerX + margin, y, stickW, stickH);
+                if (btnR3 != null) rects[btnR3] = new Rectangle(innerX + margin + stickW + margin, y, stickW, stickH);
                 y += stickH + margin;
 
                 int dpadH = Math.Max(100, rowH * 3);
@@ -416,11 +418,11 @@ namespace SwitchRemoteGUI
                 y += dpadH + margin;
 
                 int sysH = Math.Max(30, rowH);
-                int sysW = (innerW - margin * 3) / 4;
-                if (btnMinus != null) rects[btnMinus] = new Rectangle(innerX, y, sysW, sysH);
-                if (btnHome != null) rects[btnHome] = new Rectangle(innerX + sysW + margin, y, sysW, sysH);
-                if (btnCap != null) rects[btnCap] = new Rectangle(innerX + (sysW + margin) * 2, y, sysW, sysH);
-                if (btnPlus != null) rects[btnPlus] = new Rectangle(innerX + (sysW + margin) * 3, y, sysW, sysH);
+                int sysW = (innerW - margin * 5) / 4;
+                if (btnMinus != null) rects[btnMinus] = new Rectangle(innerX + margin, y, sysW, sysH);
+                if (btnHome != null) rects[btnHome] = new Rectangle(innerX + margin + sysW + margin, y, sysW, sysH);
+                if (btnCap != null) rects[btnCap] = new Rectangle(innerX + margin + (sysW + margin) * 2, y, sysW, sysH);
+                if (btnPlus != null) rects[btnPlus] = new Rectangle(innerX + margin + (sysW + margin) * 3, y, sysW, sysH);
                 y += sysH + margin;
 
                 int abxyH = dpadH;
@@ -451,14 +453,14 @@ namespace SwitchRemoteGUI
                 int ySys = yMain + mainH + margin;
                 int yStick = ySys + systemH + margin;
 
-                if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX, yHold, innerW, holdH);
+                if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX + margin, yHold, innerW - margin * 2, holdH);
 
-                int shW = (innerW - margin * 4) / 5;
-                if (btnZL != null) rects[btnZL] = new Rectangle(innerX, ySh, shW, shoulderH);
-                if (btnL != null) rects[btnL] = new Rectangle(innerX + shW + margin, ySh, shW, shoulderH);
-                if (btnMenu != null) rects[btnMenu] = new Rectangle(innerX + (shW + margin) * 2, ySh, shW, shoulderH);
-                if (btnR != null) rects[btnR] = new Rectangle(innerX + (shW + margin) * 3, ySh, shW, shoulderH);
-                if (btnZR != null) rects[btnZR] = new Rectangle(innerX + (shW + margin) * 4, ySh, shW, shoulderH);
+                int shW = (innerW - margin * 6) / 5;
+                if (btnZL != null) rects[btnZL] = new Rectangle(innerX + margin, ySh, shW, shoulderH);
+                if (btnL != null) rects[btnL] = new Rectangle(innerX + margin + shW + margin, ySh, shW, shoulderH);
+                if (btnMenu != null) rects[btnMenu] = new Rectangle(innerX + margin + (shW + margin) * 2, ySh, shW, shoulderH);
+                if (btnR != null) rects[btnR] = new Rectangle(innerX + margin + (shW + margin) * 3, ySh, shW, shoulderH);
+                if (btnZR != null) rects[btnZR] = new Rectangle(innerX + margin + (shW + margin) * 4, ySh, shW, shoulderH);
 
                 int leftAreaW = innerW / 2;
                 btnBaseSize = Math.Min(mainH / 3, (leftAreaW - margin * 2) / 3);
@@ -476,15 +478,15 @@ namespace SwitchRemoteGUI
                 if (btnA != null) rects[btnA] = new Rectangle(rightCenterX - btnBaseSize / 2 + btnBaseSize, mainCenterY - btnBaseSize / 2, btnBaseSize, btnBaseSize);
                 if (btnB != null) rects[btnB] = new Rectangle(rightCenterX - btnBaseSize / 2, mainCenterY - btnBaseSize / 2 + btnBaseSize, btnBaseSize, btnBaseSize);
 
-                int sysW = (innerW - margin * 3) / 4;
-                if (btnMinus != null) rects[btnMinus] = new Rectangle(innerX, ySys, sysW, systemH);
-                if (btnHome != null) rects[btnHome] = new Rectangle(innerX + sysW + margin, ySys, sysW, systemH);
-                if (btnCap != null) rects[btnCap] = new Rectangle(innerX + (sysW + margin) * 2, ySys, sysW, systemH);
-                if (btnPlus != null) rects[btnPlus] = new Rectangle(innerX + (sysW + margin) * 3, ySys, sysW, systemH);
+                int sysW = (innerW - margin * 5) / 4;
+                if (btnMinus != null) rects[btnMinus] = new Rectangle(innerX + margin, ySys, sysW, systemH);
+                if (btnHome != null) rects[btnHome] = new Rectangle(innerX + margin + sysW + margin, ySys, sysW, systemH);
+                if (btnCap != null) rects[btnCap] = new Rectangle(innerX + margin + (sysW + margin) * 2, ySys, sysW, systemH);
+                if (btnPlus != null) rects[btnPlus] = new Rectangle(innerX + margin + (sysW + margin) * 3, ySys, sysW, systemH);
 
-                int stickW = (innerW - margin) / 2;
-                if (btnL3 != null) rects[btnL3] = new Rectangle(innerX, yStick, stickW, stickH);
-                if (btnR3 != null) rects[btnR3] = new Rectangle(innerX + stickW + margin, yStick, stickW, stickH);
+                int stickW = (innerW - margin * 3) / 2;
+                if (btnL3 != null) rects[btnL3] = new Rectangle(innerX + margin, yStick, stickW, stickH);
+                if (btnR3 != null) rects[btnR3] = new Rectangle(innerX + margin + stickW + margin, yStick, stickW, stickH);
             }
 
             float fontSize = Math.Max(8, btnBaseSize / 2.5f);
@@ -561,7 +563,6 @@ namespace SwitchRemoteGUI
         void ConnectPort() { try { port = new SerialPort(portName, 9600); port.Open(); } catch { } }
     }
 
-    // ★★★ 修正: 描画クラスを元に戻す ★★★
     public class RotatableButton : Button
     {
         public int RotationAngle { get; set; } = 0;
@@ -584,11 +585,8 @@ namespace SwitchRemoteGUI
         {
             Graphics g = pevent.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
             if (this.Parent != null) { using (Brush parentBrush = new SolidBrush(this.Parent.BackColor)) { g.FillRectangle(parentBrush, this.ClientRectangle); } }
-
-            // ★修正: 純粋なBackColorで塗りつぶす (透明化はFormのOpacityで行う)
             Color c = this.BackColor.A == 0 ? Color.White : this.BackColor;
             using (Brush brush = new SolidBrush(c)) { g.FillRegion(brush, this.Region); }
-
             if (!string.IsNullOrEmpty(this.Text))
             {
                 StringFormat sf = new StringFormat(); sf.Alignment = StringAlignment.Center; sf.LineAlignment = StringAlignment.Center;
