@@ -29,9 +29,10 @@ namespace SwitchRemoteGUI
         bool _isHoldMode = true;
         bool _isMenuOpen = false;
 
-        // ★追加: カスタムボタン(斜め/同時押し)の表示状態
+        // カスタムボタン(斜め/同時押し)の表示状態
         bool _showCustomButtons = true;
 
+        // 透明度 (初期値 30%)
         double _targetOpacity = 0.3;
 
         System.Windows.Forms.Timer _repeatTimer;
@@ -44,12 +45,12 @@ namespace SwitchRemoteGUI
         RotatableButton? btnBgToggle;
         RotatableLabel? lblTitle;
 
-        // 上部コントロール
-        RotatableButton? btnCustom;     // カスタムボタン表示切替
-        RotatableButton? btnHoldToggle; // 連射切替
-        RotatableButton? btnMenu;       // メニュー開閉
+        // 上部コントロール (Custom, Hold, Menu)
+        RotatableButton? btnCustom;
+        RotatableButton? btnHoldToggle;
+        RotatableButton? btnMenu;
 
-        // ショルダー
+        // ショルダー (LRは中央)
         RotatableButton? btnZL, btnL, btnLR, btnR, btnZR;
 
         // メイン操作 (十字キー + 斜め)
@@ -63,7 +64,7 @@ namespace SwitchRemoteGUI
         RotatableButton? btnMinus, btnHome, btnCap, btnPlus;
         RotatableButton? btnL3, btnR3;
 
-        // メニューパネル (機能設定用)
+        // メニューパネル
         Panel? pnlMenu;
         RotatableButton? mBtnObs, mBtnHide;
         RotatableButton? mBtnRot, mBtnTrans;
@@ -168,7 +169,6 @@ namespace SwitchRemoteGUI
             }
         }
 
-        // カスタムボタン（斜め・同時押し）の表示切り替え
         void ToggleCustomButtons()
         {
             _showCustomButtons = !_showCustomButtons;
@@ -341,8 +341,28 @@ namespace SwitchRemoteGUI
                 b.FlatAppearance.BorderSize = 0;
                 b.TabStop = false;
                 b.Opacity = 1.0f;
-                b.MouseDown += (s, e) => { if (isRepeat || _isHoldMode) { _repeatingCmd = cmd; Send(cmd, true); _repeatTimer.Start(); } else { Send(cmd, false); } };
-                b.MouseUp += (s, e) => { if (isRepeat || _isHoldMode) { _repeatTimer.Stop(); _repeatingCmd = ""; } ClearBuffer(); };
+                b.MouseDown += (s, e) => {
+                    // ★修正: Holdモード時は、isRepeat(ボタン本来の属性)を無視して強制リピート
+                    // OFF時は強制シングル
+                    if (_isHoldMode)
+                    {
+                        _repeatingCmd = cmd;
+                        Send(cmd, true);
+                        _repeatTimer.Start();
+                    }
+                    else
+                    {
+                        Send(cmd, false);
+                    }
+                };
+                b.MouseUp += (s, e) => {
+                    if (_isHoldMode)
+                    {
+                        _repeatTimer.Stop();
+                        _repeatingCmd = "";
+                    }
+                    ClearBuffer();
+                };
                 this.Controls.Add(b);
                 return b;
             }
@@ -350,11 +370,13 @@ namespace SwitchRemoteGUI
             // --- メイン画面 ---
             btnLayoutToggle = MkBtn(this, "↻ 0°", Color.FromArgb(70, 70, 70), (s, e) => RotateLayout());
             btnLayoutToggle.ForeColor = Color.White;
+            btnLayoutToggle.Opacity = 0.8f;
 
             btnBgToggle = MkBtn(this, "透過", Color.FromArgb(70, 70, 70), (s, e) => ToggleBlackMode());
             btnBgToggle.ForeColor = Color.White;
+            btnBgToggle.Opacity = 0.8f;
 
-            // ★上部: Custom(トグル), Hold, Menu
+            // ★上部: Custom, Hold, Menu (横並び)
             btnCustom = MkBtn(this, "Custom: ON", Color.Gold, (s, e) => ToggleCustomButtons());
             btnHoldToggle = MkBtn(this, "Hold: ON", Color.LightGreen, (s, e) => ToggleHoldMode());
             btnMenu = MkBtn(this, "MENU", Color.Orange, (s, e) => ToggleMenu());
@@ -362,11 +384,11 @@ namespace SwitchRemoteGUI
             // ★ショルダー (LRは中央)
             btnZL = MkGame("ZL", "e", false, Color.DarkGray);
             btnL = MkGame("L", "q", false, Color.Gray);
-            btnLR = MkGame("LR", "qw", false, Color.Orange);
+            btnLR = MkGame("LR", "qw", false, Color.Orange); // 中央にLR
             btnR = MkGame("R", "w", false, Color.Gray);
             btnZR = MkGame("ZR", "r", false, Color.DarkGray);
 
-            // ★十字キー & 斜め (3x3グリッド用)
+            // ★十字キー & 斜め
             Color diagColor = Color.FromArgb(240, 240, 240);
             btnUpLeft = MkGame("↖", "IJ", false, diagColor);
             btnUp = MkGame("↑", "I", true);
@@ -377,7 +399,7 @@ namespace SwitchRemoteGUI
             btnDown = MkGame("↓", "K", true);
             btnDownRight = MkGame("↘", "KL", false, diagColor);
 
-            // ★ABXY & 同時押し (3x3グリッド用)
+            // ★ABXY & 同時押し
             btnXY = MkGame("XY", "sa", false, diagColor);
             btnX = MkGame("X", "s", false, Color.Yellow);
             btnXA = MkGame("XA", "sz", false, diagColor);
@@ -440,7 +462,8 @@ namespace SwitchRemoteGUI
                 int rowH = contentH / 14;
                 int y = contentY;
 
-                // 1. 上部
+                // 1. 上部: Custom / Hold / Menu (縦並びではなく横並びにするには高さ調整が必要だが、ここでは縦配置の最上段として扱う)
+                // 縦画面でも横並びに配置
                 int topRowH = Math.Max(30, rowH);
                 int btnW = (innerW - margin * 2) / 3;
                 if (btnCustom != null) rects[btnCustom] = new Rectangle(innerX, y, btnW, topRowH);
@@ -458,15 +481,13 @@ namespace SwitchRemoteGUI
                 if (btnZR != null) rects[btnZR] = new Rectangle(innerX + (shW + margin) * 4, y, shW, shH);
                 y += shH + margin;
 
-                // 3. L3/R3
                 int stickH = Math.Max(30, rowH);
                 int stickW = (innerW - margin) / 2;
                 if (btnL3 != null) rects[btnL3] = new Rectangle(innerX, y, stickW, stickH);
                 if (btnR3 != null) rects[btnR3] = new Rectangle(innerX + stickW + margin, y, stickW, stickH);
                 y += stickH + margin;
 
-                // 4. 十字キー (3x3)
-                int dpadH = Math.Max(100, rowH * 3);
+                int dpadH = Math.Max(120, rowH * 3);
                 btnBaseSize = Math.Min(innerW / 3, dpadH / 3);
                 int centerX = innerX + innerW / 2;
                 int centerY = y + dpadH / 2;
@@ -482,7 +503,6 @@ namespace SwitchRemoteGUI
                 if (btnDownRight != null) rects[btnDownRight] = new Rectangle(centerX + b / 2, centerY + b / 2, b, b);
                 y += dpadH + margin;
 
-                // 5. システム
                 int sysH = Math.Max(30, rowH);
                 int sysW = (innerW - margin * 3) / 4;
                 if (btnMinus != null) rects[btnMinus] = new Rectangle(innerX, y, sysW, sysH);
@@ -491,7 +511,6 @@ namespace SwitchRemoteGUI
                 if (btnPlus != null) rects[btnPlus] = new Rectangle(innerX + (sysW + margin) * 3, y, sysW, sysH);
                 y += sysH + margin;
 
-                // 6. ABXY (3x3)
                 int abxyH = dpadH;
                 centerY = y + abxyH / 2;
                 if (btnXY != null) rects[btnXY] = new Rectangle(centerX - b - b / 2, centerY - b - b / 2, b, b);
@@ -524,13 +543,13 @@ namespace SwitchRemoteGUI
                 int ySys = yMain + mainH + margin;
                 int yStick = ySys + systemH + margin;
 
-                // 1. 上部
+                // 1. 上部: Custom / Hold / Menu
                 int btnW = (innerW - margin * 2) / 3;
                 if (btnCustom != null) rects[btnCustom] = new Rectangle(innerX, yTop, btnW, topH);
                 if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX + btnW + margin, yTop, btnW, topH);
                 if (btnMenu != null) rects[btnMenu] = new Rectangle(innerX + (btnW + margin) * 2, yTop, btnW, topH);
 
-                // 2. ショルダー (LR中央)
+                // 2. ショルダー (LRは中央)
                 int shW = (innerW - margin * 4) / 5;
                 if (btnZL != null) rects[btnZL] = new Rectangle(innerX, ySh, shW, shoulderH);
                 if (btnL != null) rects[btnL] = new Rectangle(innerX + shW + margin, ySh, shW, shoulderH);
