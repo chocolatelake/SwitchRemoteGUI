@@ -68,6 +68,10 @@ namespace SwitchRemoteGUI
         bool _isHoldMode = true;
         bool _isMenuOpen = false;
         bool _showCustomButtons = true;
+
+        // ★追加: コントローラー非表示フラグ
+        bool _isControllerHidden = false;
+
         double _targetOpacity = 0.3;
 
         // 連射制御
@@ -75,13 +79,16 @@ namespace SwitchRemoteGUI
         string _repeatingCmd = "";
         DateTime _lastSendTime = DateTime.MinValue;
 
-        // ★追加: キーボード制御用 (OSのキーリピート対策)
+        // キーボード制御用 (OSのキーリピート対策)
         Keys _currentPressedKey = Keys.None;
 
         // UIコントロール
         RotatableButton? btnLayoutToggle;
         RotatableButton? btnBgToggle;
         RotatableLabel? lblTitle;
+
+        // ★追加: 再表示用ボタン
+        RotatableButton? btnShowController;
 
         RotatableButton? btnCustom;
         RotatableButton? btnHoldToggle;
@@ -100,6 +107,9 @@ namespace SwitchRemoteGUI
         RotatableButton? mBtnRot, mBtnTrans;
         RotatableButton? mBtnFull, mBtnClose;
         RotatableButton? mBtnOp;
+
+        // ★追加: メニュー内の非表示ボタン
+        RotatableButton? mBtnHideController;
 
         #endregion
 
@@ -124,7 +134,7 @@ namespace SwitchRemoteGUI
             // イベント設定
             this.KeyPreview = true;
             this.KeyDown += Form1_KeyDown;
-            this.KeyUp += Form1_KeyUp; // ★追加
+            this.KeyUp += Form1_KeyUp; // キー離上検知を追加
             this.Paint += Form1_Paint;
 
             ConnectPort();
@@ -145,12 +155,16 @@ namespace SwitchRemoteGUI
             // 既存のMkGame内にあったロジックをそのまま使用
             if (_isHoldMode)
             {
+                // Hold ON: 即時送信 -> Delay -> 高速連射
                 _repeatingCmd = cmd;
-                Send(cmd, true);
+                Send(cmd, true); // 1回目 (強制送信)
+
+                _repeatTimer.Interval = REPEAT_DELAY; // 最初はタメを入れる
                 _repeatTimer.Start();
             }
             else
             {
+                // Hold OFF: 単発送信 (連打防止あり)
                 Send(cmd, false);
             }
         }
@@ -317,20 +331,64 @@ namespace SwitchRemoteGUI
             }
         }
 
+        // ★追加: コントローラー表示・非表示の切り替え
+        void SetControllerVisibility(bool visible)
+        {
+            _isControllerHidden = !visible;
+            _isMenuOpen = false; // メニューは閉じる
+            if (pnlMenu != null) pnlMenu.Visible = false;
+
+            // 再表示ボタンの切り替え
+            if (btnShowController != null) btnShowController.Visible = !visible;
+
+            // コントローラーパーツの表示切替
+            Control?[] ctrls = {
+                btnCustom, btnHoldToggle, btnMenu,
+                btnZL, btnL, btnLR, btnR, btnZR,
+                btnUp, btnLeft, btnDown, btnRight,
+                btnUpLeft, btnUpRight, btnDownLeft, btnDownRight,
+                btnX, btnY, btnB, btnA,
+                btnXY, btnXA, btnAB, btnYB,
+                btnMinus, btnHome, btnCap, btnPlus,
+                btnL3, btnR3
+            };
+
+            foreach (var c in ctrls)
+            {
+                if (c != null) c.Visible = visible;
+            }
+
+            // Customボタンの表示状態はフラグに従って復元
+            if (visible) ToggleCustomButtons();
+
+            UpdateLayout();
+        }
+
         void ToggleCustomButtons()
         {
+            // 非表示モード中なら処理しない（復元時にやるため）
+            if (_isControllerHidden) return;
+
+            // 既存ロジックを再利用
             _showCustomButtons = !_showCustomButtons;
-            Control?[] customs = {
-                btnUpLeft, btnUpRight, btnDownLeft, btnDownRight,
-                btnXY, btnXA, btnAB, btnYB
-            };
-            foreach (var btn in customs) if (btn != null) btn.Visible = _showCustomButtons;
+
+            ApplyCustomButtonVisibility();
 
             if (btnCustom != null)
             {
                 btnCustom.Text = _showCustomButtons ? "Custom: ON" : "Custom: OFF";
                 btnCustom.BackColor = _showCustomButtons ? Color.Gold : Color.Wheat;
             }
+        }
+
+        // ★追加: Customボタンの表示反映処理（非表示モード対応）
+        void ApplyCustomButtonVisibility()
+        {
+            Control?[] customs = {
+                btnUpLeft, btnUpRight, btnDownLeft, btnDownRight,
+                btnXY, btnXA, btnAB, btnYB
+            };
+            foreach (var btn in customs) if (btn != null) btn.Visible = _showCustomButtons && !_isControllerHidden;
         }
 
         void RotateLayout()
@@ -514,6 +572,10 @@ namespace SwitchRemoteGUI
             btnBgToggle.ForeColor = Color.White;
             btnBgToggle.Opacity = 0.8f;
 
+            // ★追加: 再表示用ボタン (初期は非表示)
+            btnShowController = MkBtn(this, "Show GUI", Color.LightYellow, (s, e) => SetControllerVisibility(true));
+            btnShowController.Visible = false;
+
             btnCustom = MkBtn(this, "Custom: ON", Color.Gold, (s, e) => ToggleCustomButtons());
             btnHoldToggle = MkBtn(this, "Hold: ON", Color.LightGreen, (s, e) => ToggleHoldMode());
             btnMenu = MkBtn(this, "MENU", Color.Orange, (s, e) => ToggleMenu());
@@ -556,11 +618,15 @@ namespace SwitchRemoteGUI
 
             // メニュー内
             mBtnObs = MkBtn(pnlMenu, "OBS", Color.LightSkyBlue, (s, e) => { ControlApp("obs", true); ToggleMenu(); });
-            mBtnHide = MkBtn(pnlMenu, "Hide", Color.LightGray, (s, e) => { ControlApp("obs", false); ToggleMenu(); });
+            mBtnHide = MkBtn(pnlMenu, "Hide OBS", Color.LightGray, (s, e) => { ControlApp("obs", false); ToggleMenu(); });
             mBtnRot = MkBtn(pnlMenu, "Rotate", Color.White, (s, e) => { RotateLayout(); ToggleMenu(); });
             mBtnTrans = MkBtn(pnlMenu, "Trans", Color.LightGray, (s, e) => { ToggleBlackMode(); ToggleMenu(); });
             mBtnFull = MkBtn(pnlMenu, "Full / Win", Color.LightCoral, (s, e) => { ToggleMaximize(); });
             mBtnOp = MkBtn(pnlMenu, $"Op: {(int)(_targetOpacity * 100)}%", Color.White, (s, e) => { ToggleOpacity(); });
+
+            // ★追加: GUI非表示ボタン
+            mBtnHideController = MkBtn(pnlMenu, "Hide GUI", Color.Plum, (s, e) => SetControllerVisibility(false));
+
             mBtnClose = MkBtn(pnlMenu, "Close Menu", Color.Silver, (s, e) => ToggleMenu());
         }
 
@@ -596,139 +662,126 @@ namespace SwitchRemoteGUI
             if (btnBgToggle != null) rects[btnBgToggle] = new Rectangle(innerX + innerW - toggleW, innerY, toggleW, topBarH);
             if (btnLayoutToggle != null) rects[btnLayoutToggle] = new Rectangle(innerX + innerW - toggleW * 2 - margin, innerY, toggleW, topBarH);
 
+            // ★追加: コントローラー非表示時の「Show GUI」ボタン配置
+            if (_isControllerHidden && btnShowController != null)
+            {
+                int showW = 120;
+                int showH = 40;
+                // 画面中央に配置
+                rects[btnShowController] = new Rectangle((W - showW) / 2, (H - showH) / 2, showW, showH);
+            }
+
             int btnBaseSize = 30;
 
-            if (_rotationAngle == 90 || _rotationAngle == 270)
+            if (!_isControllerHidden)
             {
-                int rowH = contentH / 14;
-                int y = contentY;
+                if (_rotationAngle == 90 || _rotationAngle == 270)
+                {
+                    int rowH = contentH / 14;
+                    int y = contentY;
 
-                int topRowH = Math.Max(30, rowH);
-                int btnW = (innerW - margin * 2) / 3;
-                if (btnCustom != null) rects[btnCustom] = new Rectangle(innerX, y, btnW, topRowH);
-                if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX + btnW + margin, y, btnW, topRowH);
-                if (btnMenu != null) rects[btnMenu] = new Rectangle(innerX + (btnW + margin) * 2, y, btnW, topRowH);
-                y += topRowH + margin;
+                    int topRowH = Math.Max(30, rowH);
+                    int btnW = (innerW - margin * 2) / 3;
+                    if (btnCustom != null) rects[btnCustom] = new Rectangle(innerX, y, btnW, topRowH);
+                    if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX + btnW + margin, y, btnW, topRowH);
+                    if (btnMenu != null) rects[btnMenu] = new Rectangle(innerX + (btnW + margin) * 2, y, btnW, topRowH);
+                    y += topRowH + margin;
 
-                int shH = Math.Max(40, rowH * 2);
-                int shW = (innerW - margin * 4) / 5;
-                if (btnZL != null) rects[btnZL] = new Rectangle(innerX, y, shW, shH);
-                if (btnL != null) rects[btnL] = new Rectangle(innerX + shW + margin, y, shW, shH);
-                if (btnLR != null) rects[btnLR] = new Rectangle(innerX + (shW + margin) * 2, y, shW, shH);
-                if (btnR != null) rects[btnR] = new Rectangle(innerX + (shW + margin) * 3, y, shW, shH);
-                if (btnZR != null) rects[btnZR] = new Rectangle(innerX + (shW + margin) * 4, y, shW, shH);
-                y += shH + margin;
+                    int shH = Math.Max(40, rowH * 2);
+                    int shW = (innerW - margin * 4) / 5;
+                    if (btnZL != null) rects[btnZL] = new Rectangle(innerX, y, shW, shH);
+                    if (btnL != null) rects[btnL] = new Rectangle(innerX + shW + margin, y, shW, shH);
+                    if (btnLR != null) rects[btnLR] = new Rectangle(innerX + (shW + margin) * 2, y, shW, shH);
+                    if (btnR != null) rects[btnR] = new Rectangle(innerX + (shW + margin) * 3, y, shW, shH);
+                    if (btnZR != null) rects[btnZR] = new Rectangle(innerX + (shW + margin) * 4, y, shW, shH);
+                    y += shH + margin;
 
-                int stickH = Math.Max(30, rowH);
-                int stickW = (innerW - margin) / 2;
-                if (btnL3 != null) rects[btnL3] = new Rectangle(innerX, y, stickW, stickH);
-                if (btnR3 != null) rects[btnR3] = new Rectangle(innerX + stickW + margin, y, stickW, stickH);
-                y += stickH + margin;
+                    int stickH = Math.Max(30, rowH);
+                    int stickW = (innerW - margin) / 2;
+                    if (btnL3 != null) rects[btnL3] = new Rectangle(innerX, y, stickW, stickH);
+                    if (btnR3 != null) rects[btnR3] = new Rectangle(innerX + stickW + margin, y, stickW, stickH);
+                    y += stickH + margin;
 
-                int dpadH = Math.Max(120, rowH * 3);
-                btnBaseSize = Math.Min(innerW / 3, dpadH / 3);
-                int centerX = innerX + innerW / 2;
-                int centerY = y + dpadH / 2;
-                int b = btnBaseSize;
+                    int dpadH = Math.Max(120, rowH * 3);
+                    btnBaseSize = Math.Min(innerW / 3, dpadH / 3);
+                    int centerX = innerX + innerW / 2;
+                    int centerY = y + dpadH / 2;
+                    int b = btnBaseSize;
 
-                if (btnUpLeft != null) rects[btnUpLeft] = new Rectangle(centerX - b - b / 2, centerY - b - b / 2, b, b);
-                if (btnUp != null) rects[btnUp] = new Rectangle(centerX - b / 2, centerY - b - b / 2, b, b);
-                if (btnUpRight != null) rects[btnUpRight] = new Rectangle(centerX + b / 2, centerY - b - b / 2, b, b);
-                if (btnLeft != null) rects[btnLeft] = new Rectangle(centerX - b - b / 2, centerY - b / 2, b, b);
-                if (btnRight != null) rects[btnRight] = new Rectangle(centerX + b / 2, centerY - b / 2, b, b);
-                if (btnDownLeft != null) rects[btnDownLeft] = new Rectangle(centerX - b - b / 2, centerY + b / 2, b, b);
-                if (btnDown != null) rects[btnDown] = new Rectangle(centerX - b / 2, centerY + b / 2, b, b);
-                if (btnDownRight != null) rects[btnDownRight] = new Rectangle(centerX + b / 2, centerY + b / 2, b, b);
-                y += dpadH + margin;
+                    SetGridRects(rects, centerX, centerY, b,
+                        btnUpLeft, btnUp, btnUpRight, btnLeft, btnRight, btnDownLeft, btnDown, btnDownRight);
+                    y += dpadH + margin;
 
-                int sysH = Math.Max(30, rowH);
-                int sysW = (innerW - margin * 3) / 4;
-                if (btnMinus != null) rects[btnMinus] = new Rectangle(innerX, y, sysW, sysH);
-                if (btnHome != null) rects[btnHome] = new Rectangle(innerX + sysW + margin, y, sysW, sysH);
-                if (btnCap != null) rects[btnCap] = new Rectangle(innerX + (sysW + margin) * 2, y, sysW, sysH);
-                if (btnPlus != null) rects[btnPlus] = new Rectangle(innerX + (sysW + margin) * 3, y, sysW, sysH);
-                y += sysH + margin;
+                    int sysH = Math.Max(30, rowH);
+                    int sysW = (innerW - margin * 3) / 4;
+                    if (btnMinus != null) rects[btnMinus] = new Rectangle(innerX, y, sysW, sysH);
+                    if (btnHome != null) rects[btnHome] = new Rectangle(innerX + sysW + margin, y, sysW, sysH);
+                    if (btnCap != null) rects[btnCap] = new Rectangle(innerX + (sysW + margin) * 2, y, sysW, sysH);
+                    if (btnPlus != null) rects[btnPlus] = new Rectangle(innerX + (sysW + margin) * 3, y, sysW, sysH);
+                    y += sysH + margin;
 
-                int abxyH = dpadH;
-                centerY = y + abxyH / 2;
-                if (btnXY != null) rects[btnXY] = new Rectangle(centerX - b - b / 2, centerY - b - b / 2, b, b);
-                if (btnX != null) rects[btnX] = new Rectangle(centerX - b / 2, centerY - b - b / 2, b, b);
-                if (btnXA != null) rects[btnXA] = new Rectangle(centerX + b / 2, centerY - b - b / 2, b, b);
-                if (btnY != null) rects[btnY] = new Rectangle(centerX - b - b / 2, centerY - b / 2, b, b);
-                if (btnA != null) rects[btnA] = new Rectangle(centerX + b / 2, centerY - b / 2, b, b);
-                if (btnYB != null) rects[btnYB] = new Rectangle(centerX - b - b / 2, centerY + b / 2, b, b);
-                if (btnB != null) rects[btnB] = new Rectangle(centerX - b / 2, centerY + b / 2, b, b);
-                if (btnAB != null) rects[btnAB] = new Rectangle(centerX + b / 2, centerY + b / 2, b, b);
-            }
-            else
-            {
-                int topH = (int)(contentH * 0.10);
-                int shoulderH = (int)(contentH * 0.15);
-                int stickH = (int)(contentH * 0.12);
-                int systemH = (int)(contentH * 0.10);
+                    int abxyH = dpadH;
+                    centerY = y + abxyH / 2;
+                    SetGridRects(rects, centerX, centerY, b,
+                        btnXY, btnX, btnXA, btnY, btnA, btnYB, btnB, btnAB);
+                }
+                else
+                {
+                    int topH = (int)(contentH * 0.10);
+                    int shoulderH = (int)(contentH * 0.15);
+                    int stickH = (int)(contentH * 0.12);
+                    int systemH = (int)(contentH * 0.10);
 
-                if (topH < 25) topH = 25;
-                if (shoulderH < 40) shoulderH = 40;
-                if (stickH < 30) stickH = 30;
-                if (systemH < 30) systemH = 30;
+                    if (topH < 25) topH = 25;
+                    if (shoulderH < 40) shoulderH = 40;
+                    if (stickH < 30) stickH = 30;
+                    if (systemH < 30) systemH = 30;
 
-                int mainH = contentH - topH - shoulderH - stickH - systemH - (margin * 4);
-                if (mainH < 80) mainH = 80;
+                    int mainH = contentH - topH - shoulderH - stickH - systemH - (margin * 4);
+                    if (mainH < 80) mainH = 80;
 
-                int yTop = contentY;
-                int ySh = yTop + topH + margin;
-                int yMain = ySh + shoulderH + margin;
-                int ySys = yMain + mainH + margin;
-                int yStick = ySys + systemH + margin;
+                    int yTop = contentY;
+                    int ySh = yTop + topH + margin;
+                    int yMain = ySh + shoulderH + margin;
+                    int ySys = yMain + mainH + margin;
+                    int yStick = ySys + systemH + margin;
 
-                int btnW = (innerW - margin * 2) / 3;
-                if (btnCustom != null) rects[btnCustom] = new Rectangle(innerX, yTop, btnW, topH);
-                if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX + btnW + margin, yTop, btnW, topH);
-                if (btnMenu != null) rects[btnMenu] = new Rectangle(innerX + (btnW + margin) * 2, yTop, btnW, topH);
+                    int btnW = (innerW - margin * 2) / 3;
+                    if (btnCustom != null) rects[btnCustom] = new Rectangle(innerX, yTop, btnW, topH);
+                    if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX + btnW + margin, yTop, btnW, topH);
+                    if (btnMenu != null) rects[btnMenu] = new Rectangle(innerX + (btnW + margin) * 2, yTop, btnW, topH);
 
-                int shW = (innerW - margin * 4) / 5;
-                if (btnZL != null) rects[btnZL] = new Rectangle(innerX, ySh, shW, shoulderH);
-                if (btnL != null) rects[btnL] = new Rectangle(innerX + shW + margin, ySh, shW, shoulderH);
-                if (btnLR != null) rects[btnLR] = new Rectangle(innerX + (shW + margin) * 2, ySh, shW, shoulderH);
-                if (btnR != null) rects[btnR] = new Rectangle(innerX + (shW + margin) * 3, ySh, shW, shoulderH);
-                if (btnZR != null) rects[btnZR] = new Rectangle(innerX + (shW + margin) * 4, ySh, shW, shoulderH);
+                    int shW = (innerW - margin * 4) / 5;
+                    if (btnZL != null) rects[btnZL] = new Rectangle(innerX, ySh, shW, shoulderH);
+                    if (btnL != null) rects[btnL] = new Rectangle(innerX + shW + margin, ySh, shW, shoulderH);
+                    if (btnLR != null) rects[btnLR] = new Rectangle(innerX + (shW + margin) * 2, ySh, shW, shoulderH);
+                    if (btnR != null) rects[btnR] = new Rectangle(innerX + (shW + margin) * 3, ySh, shW, shoulderH);
+                    if (btnZR != null) rects[btnZR] = new Rectangle(innerX + (shW + margin) * 4, ySh, shW, shoulderH);
 
-                int leftAreaW = innerW / 2;
-                btnBaseSize = Math.Min(mainH / 3, (leftAreaW - margin * 2) / 3);
-                int b = btnBaseSize;
+                    int leftAreaW = innerW / 2;
+                    btnBaseSize = Math.Min(mainH / 3, (leftAreaW - margin * 2) / 3);
+                    int b = btnBaseSize;
 
-                int leftCenterX = innerX + leftAreaW / 2;
-                int mainCenterY = yMain + mainH / 2;
+                    int leftCenterX = innerX + leftAreaW / 2;
+                    int mainCenterY = yMain + mainH / 2;
 
-                if (btnUpLeft != null) rects[btnUpLeft] = new Rectangle(leftCenterX - b - b / 2, mainCenterY - b - b / 2, b, b);
-                if (btnUp != null) rects[btnUp] = new Rectangle(leftCenterX - b / 2, mainCenterY - b - b / 2, b, b);
-                if (btnUpRight != null) rects[btnUpRight] = new Rectangle(leftCenterX + b / 2, mainCenterY - b - b / 2, b, b);
-                if (btnLeft != null) rects[btnLeft] = new Rectangle(leftCenterX - b - b / 2, mainCenterY - b / 2, b, b);
-                if (btnRight != null) rects[btnRight] = new Rectangle(leftCenterX + b / 2, mainCenterY - b / 2, b, b);
-                if (btnDownLeft != null) rects[btnDownLeft] = new Rectangle(leftCenterX - b - b / 2, mainCenterY + b / 2, b, b);
-                if (btnDown != null) rects[btnDown] = new Rectangle(leftCenterX - b / 2, mainCenterY + b / 2, b, b);
-                if (btnDownRight != null) rects[btnDownRight] = new Rectangle(leftCenterX + b / 2, mainCenterY + b / 2, b, b);
+                    SetGridRects(rects, leftCenterX, mainCenterY, b,
+                        btnUpLeft, btnUp, btnUpRight, btnLeft, btnRight, btnDownLeft, btnDown, btnDownRight);
 
-                int rightCenterX = innerX + leftAreaW + (innerW - leftAreaW) / 2;
+                    int rightCenterX = innerX + leftAreaW + (innerW - leftAreaW) / 2;
+                    SetGridRects(rects, rightCenterX, mainCenterY, b,
+                        btnXY, btnX, btnXA, btnY, btnA, btnYB, btnB, btnAB);
 
-                if (btnXY != null) rects[btnXY] = new Rectangle(rightCenterX - b - b / 2, mainCenterY - b - b / 2, b, b);
-                if (btnX != null) rects[btnX] = new Rectangle(rightCenterX - b / 2, mainCenterY - b - b / 2, b, b);
-                if (btnXA != null) rects[btnXA] = new Rectangle(rightCenterX + b / 2, mainCenterY - b - b / 2, b, b);
-                if (btnY != null) rects[btnY] = new Rectangle(rightCenterX - b - b / 2, mainCenterY - b / 2, b, b);
-                if (btnA != null) rects[btnA] = new Rectangle(rightCenterX + b / 2, mainCenterY - b / 2, b, b);
-                if (btnYB != null) rects[btnYB] = new Rectangle(rightCenterX - b - b / 2, mainCenterY + b / 2, b, b);
-                if (btnB != null) rects[btnB] = new Rectangle(rightCenterX - b / 2, mainCenterY + b / 2, b, b);
-                if (btnAB != null) rects[btnAB] = new Rectangle(rightCenterX + b / 2, mainCenterY + b / 2, b, b);
+                    int sysW = (innerW - margin * 3) / 4;
+                    if (btnMinus != null) rects[btnMinus] = new Rectangle(innerX, ySys, sysW, systemH);
+                    if (btnHome != null) rects[btnHome] = new Rectangle(innerX + sysW + margin, ySys, sysW, systemH);
+                    if (btnCap != null) rects[btnCap] = new Rectangle(innerX + (sysW + margin) * 2, ySys, sysW, systemH);
+                    if (btnPlus != null) rects[btnPlus] = new Rectangle(innerX + (sysW + margin) * 3, ySys, sysW, systemH);
 
-                int sysW = (innerW - margin * 3) / 4;
-                if (btnMinus != null) rects[btnMinus] = new Rectangle(innerX, ySys, sysW, systemH);
-                if (btnHome != null) rects[btnHome] = new Rectangle(innerX + sysW + margin, ySys, sysW, systemH);
-                if (btnCap != null) rects[btnCap] = new Rectangle(innerX + (sysW + margin) * 2, ySys, sysW, systemH);
-                if (btnPlus != null) rects[btnPlus] = new Rectangle(innerX + (sysW + margin) * 3, ySys, sysW, systemH);
-
-                int stickW = (innerW - margin) / 2;
-                if (btnL3 != null) rects[btnL3] = new Rectangle(innerX, yStick, stickW, stickH);
-                if (btnR3 != null) rects[btnR3] = new Rectangle(innerX + stickW + margin, yStick, stickW, stickH);
+                    int stickW = (innerW - margin) / 2;
+                    if (btnL3 != null) rects[btnL3] = new Rectangle(innerX, yStick, stickW, stickH);
+                    if (btnR3 != null) rects[btnR3] = new Rectangle(innerX + stickW + margin, yStick, stickW, stickH);
+                }
             }
 
             float fontSize = Math.Max(8, btnBaseSize / 2.5f);
@@ -790,7 +843,7 @@ namespace SwitchRemoteGUI
             int btnW = (w - margin * (cols + 1)) / cols;
             int btnH = (h - margin * (rows + 1)) / rows;
 
-            Control[] menuBtns = { mBtnObs, mBtnHide, mBtnRot, mBtnTrans, mBtnFull, mBtnOp, mBtnClose };
+            Control[] menuBtns = { mBtnObs, mBtnHide, mBtnRot, mBtnTrans, mBtnFull, mBtnOp, mBtnHideController, mBtnClose };
 
             for (int i = 0; i < menuBtns.Length; i++)
             {
