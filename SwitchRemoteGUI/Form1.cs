@@ -134,7 +134,7 @@ namespace SwitchRemoteGUI
             // イベント設定
             this.KeyPreview = true;
             this.KeyDown += Form1_KeyDown;
-            this.KeyUp += Form1_KeyUp; // キー離上検知を追加
+            this.KeyUp += Form1_KeyUp; // ★追加
             this.Paint += Form1_Paint;
 
             ConnectPort();
@@ -366,12 +366,11 @@ namespace SwitchRemoteGUI
 
         void ToggleCustomButtons()
         {
-            // 非表示モード中なら処理しない（復元時にやるため）
+            // 非表示モード中なら処理しない
             if (_isControllerHidden) return;
 
             // 既存ロジックを再利用
             _showCustomButtons = !_showCustomButtons;
-
             ApplyCustomButtonVisibility();
 
             if (btnCustom != null)
@@ -662,13 +661,17 @@ namespace SwitchRemoteGUI
             if (btnBgToggle != null) rects[btnBgToggle] = new Rectangle(innerX + innerW - toggleW, innerY, toggleW, topBarH);
             if (btnLayoutToggle != null) rects[btnLayoutToggle] = new Rectangle(innerX + innerW - toggleW * 2 - margin, innerY, toggleW, topBarH);
 
-            // ★追加: コントローラー非表示時の「Show GUI」ボタン配置
+            // ★追加: コントローラー非表示時の「Show GUI」ボタン配置（右上、タイトルバーの下）
             if (_isControllerHidden && btnShowController != null)
             {
                 int showW = 120;
                 int showH = 40;
-                // 画面中央に配置
-                rects[btnShowController] = new Rectangle((W - showW) / 2, (H - showH) / 2, showW, showH);
+                rects[btnShowController] = new Rectangle(
+                    innerX + innerW - showW - margin,  // 右寄せ
+                    innerY + topBarH + margin,         // タイトルバーの下
+                    showW,
+                    showH
+                );
             }
 
             int btnBaseSize = 30;
