@@ -11,34 +11,44 @@ namespace SwitchRemoteGUI
 {
     public partial class Form1 : Form
     {
-        string portName = "COM5";
-        SerialPort? port;
+        // --- 定数定義 (設定) ---
+        private const string PORT_NAME = "COM5";
+        private const int BAUD_RATE = 9600;
+        private const int SEND_INTERVAL = 400;
 
+        private const int BASE_W = 800;
+        private const int BASE_H = 400;
+
+        // --- Windows API 定数 ---
+        private const int SW_RESTORE = 9;
+        private const int SW_MINIMIZE = 6;
+        private const int WM_NCHITTEST = 0x84;
+
+        // --- Win32 API インポート ---
         [DllImport("user32.dll")] public static extern int SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
         [DllImport("user32.dll")] public static extern bool ReleaseCapture();
         [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
         [DllImport("user32.dll")] private static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
         [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
 
-        private const int SW_RESTORE = 9;
-        private const int SW_MINIMIZE = 6;
-
+        // --- フィールド (状態) ---
+        SerialPort? port;
         bool _isReady = false;
         bool _isSolidBlack = false;
         int _rotationAngle = 0;
         bool _isHoldMode = true;
         bool _isMenuOpen = false;
-
-        // カスタムボタン(斜め/同時押し)の表示状態
-        bool _showCustomButtons = true;
-
+        bool _showCustomButtons = true; // カスタムボタン(斜め/同時押し)の表示状態
         double _targetOpacity = 0.3;
 
         System.Windows.Forms.Timer _repeatTimer;
         string _repeatingCmd = "";
         DateTime _lastSendTime = DateTime.MinValue;
-        private const int SEND_INTERVAL = 400;
 
+        private int resizeGrip = 10;
+        private int borderSize = 0;
+
+        // --- UIパーツ ---
         RotatableButton? btnLayoutToggle;
         RotatableButton? btnBgToggle;
         RotatableLabel? lblTitle;
@@ -61,11 +71,6 @@ namespace SwitchRemoteGUI
         RotatableButton? mBtnFull, mBtnClose;
         RotatableButton? mBtnOp;
 
-        private int resizeGrip = 10;
-        private int borderSize = 0;
-        private const int BASE_W = 800;
-        private const int BASE_H = 400;
-
         public Form1()
         {
             InitializeComponent();
@@ -78,7 +83,7 @@ namespace SwitchRemoteGUI
             _repeatTimer.Interval = SEND_INTERVAL;
             _repeatTimer.Tick += RepeatTimer_Tick;
 
-            this.Padding = new Padding(0);
+            this.Padding = new Padding(borderSize);
             SetTransparentMode();
 
             this.KeyPreview = true;
@@ -261,7 +266,6 @@ namespace SwitchRemoteGUI
 
         protected override void WndProc(ref Message m)
         {
-            const int WM_NCHITTEST = 0x84;
             base.WndProc(ref m);
             if (m.Msg == WM_NCHITTEST && !_isMenuOpen)
             {
@@ -642,7 +646,7 @@ namespace SwitchRemoteGUI
             base.OnFormClosed(e);
         }
 
-        void ConnectPort() { try { port = new SerialPort(portName, 9600); port.Open(); } catch { } }
+        void ConnectPort() { try { port = new SerialPort(PORT_NAME, BAUD_RATE); port.Open(); } catch { } }
     }
 
     public class RotatableButton : Button
