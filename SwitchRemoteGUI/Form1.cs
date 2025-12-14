@@ -11,27 +11,8 @@ namespace SwitchRemoteGUI
 {
     public partial class Form1 : Form
     {
-        #region 設定・定数 (Constants)
-
-        // 通信設定
-        private const string PORT_NAME = "COM5";
-        private const int BAUD_RATE = 9600;
-        private const int SEND_INTERVAL = 400;
-
-        // UIサイズ設定
-        private const int BASE_W = 800;
-        private const int BASE_H = 400;
-        private const int RESIZE_GRIP_SIZE = 10; // リサイズ操作判定幅
-        private const int BORDER_SIZE = 0;       // ウィンドウ枠線幅
-
-        // Win32 API定数
-        private const int SW_RESTORE = 9;
-        private const int SW_MINIMIZE = 6;
-        private const int WM_NCHITTEST = 0x84;
-
-        #endregion
-
-        #region Win32 API Imports
+        string portName = "COM5";
+        SerialPort? port;
 
         [DllImport("user32.dll")] public static extern int SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
         [DllImport("user32.dll")] public static extern bool ReleaseCapture();
@@ -39,28 +20,28 @@ namespace SwitchRemoteGUI
         [DllImport("user32.dll")] private static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
         [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
 
-        #endregion
+        private const int SW_RESTORE = 9;
+        private const int SW_MINIMIZE = 6;
 
-        #region フィールド (Fields)
-
-        // 通信
-        SerialPort? port;
-
-        // 状態フラグ
         bool _isReady = false;
         bool _isSolidBlack = false;
         int _rotationAngle = 0;
         bool _isHoldMode = true;
         bool _isMenuOpen = false;
+
+        // カスタムボタン(斜め/同時押し)の表示状態
         bool _showCustomButtons = true;
+
         double _targetOpacity = 0.3;
 
-        // 連射制御
         System.Windows.Forms.Timer _repeatTimer;
         string _repeatingCmd = "";
         DateTime _lastSendTime = DateTime.MinValue;
+        private const int SEND_INTERVAL = 400;
 
-        // UIコントロール
+        // ★追加: キーボード連打対策用
+        Keys _currentPressedKey = Keys.None;
+
         RotatableButton? btnLayoutToggle;
         RotatableButton? btnBgToggle;
         RotatableLabel? lblTitle;
@@ -83,46 +64,39 @@ namespace SwitchRemoteGUI
         RotatableButton? mBtnFull, mBtnClose;
         RotatableButton? mBtnOp;
 
-        #endregion
-
-        #region コンストラクタ (Constructor)
+        private int resizeGrip = 10;
+        private int borderSize = 0;
+        private const int BASE_W = 800;
+        private const int BASE_H = 400;
 
         public Form1()
         {
             InitializeComponent();
-
-            // ウィンドウ基本設定
             this.TopMost = true;
             this.FormBorderStyle = FormBorderStyle.None;
             this.DoubleBuffered = true;
             this.MinimumSize = new Size(200, 100);
 
-            // タイマー設定
             _repeatTimer = new System.Windows.Forms.Timer();
             _repeatTimer.Interval = SEND_INTERVAL;
             _repeatTimer.Tick += RepeatTimer_Tick;
 
-            // スタイル設定
-            this.Padding = new Padding(BORDER_SIZE);
+            this.Padding = new Padding(0);
             SetTransparentMode();
 
-            // イベント設定
             this.KeyPreview = true;
             this.KeyDown += Form1_KeyDown;
+            this.KeyUp += Form1_KeyUp; // ★追加: キー離上検知
             this.Paint += Form1_Paint;
 
-            // 初期化処理
             ConnectPort();
             CreateUI();
 
             this.Size = new Size(BASE_W, BASE_H);
+
             _isReady = true;
             UpdateLayout();
         }
-
-        #endregion
-
-        #region 通信・コマンド処理 (Communication)
 
         private void RepeatTimer_Tick(object? sender, EventArgs e)
         {
@@ -135,16 +109,8 @@ namespace SwitchRemoteGUI
             {
                 string finalCmd = RotateCommand(cmd);
                 double msSinceLast = (DateTime.Now - _lastSendTime).TotalMilliseconds;
-
                 if (!force && msSinceLast < SEND_INTERVAL) return;
-
-                try
-                {
-                    port.DiscardOutBuffer();
-                    port.Write(finalCmd);
-                    _lastSendTime = DateTime.Now;
-                }
-                catch { }
+                try { port.DiscardOutBuffer(); port.Write(finalCmd); _lastSendTime = DateTime.Now; } catch { }
             }
         }
 
@@ -170,12 +136,6 @@ namespace SwitchRemoteGUI
 
         void ClearBuffer() { if (port != null && port.IsOpen) try { port.DiscardOutBuffer(); } catch { } }
 
-        void ConnectPort() { try { port = new SerialPort(PORT_NAME, BAUD_RATE); port.Open(); } catch { } }
-
-        #endregion
-
-        #region 外部アプリ制御 (App Control)
-
         void ControlApp(string keyword, bool show)
         {
             Process[] processList = Process.GetProcesses();
@@ -184,23 +144,12 @@ namespace SwitchRemoteGUI
                 if (!string.IsNullOrEmpty(p.MainWindowTitle) &&
                    (p.ProcessName.ToLower().Contains(keyword) || p.MainWindowTitle.ToLower().Contains(keyword)))
                 {
-                    if (show)
-                    {
-                        if (IsIconic(p.MainWindowHandle)) ShowWindowAsync(p.MainWindowHandle, SW_RESTORE);
-                        SetForegroundWindow(p.MainWindowHandle);
-                    }
-                    else
-                    {
-                        ShowWindowAsync(p.MainWindowHandle, SW_MINIMIZE);
-                    }
+                    if (show) { if (IsIconic(p.MainWindowHandle)) ShowWindowAsync(p.MainWindowHandle, SW_RESTORE); SetForegroundWindow(p.MainWindowHandle); }
+                    else ShowWindowAsync(p.MainWindowHandle, SW_MINIMIZE);
                     return;
                 }
             }
         }
-
-        #endregion
-
-        #region 機能トグル・状態変更 (Toggles)
 
         void ToggleMenu()
         {
@@ -303,11 +252,7 @@ namespace SwitchRemoteGUI
             this.Invalidate();
         }
 
-        #endregion
-
-        #region 描画 & ウィンドウメッセージ (Rendering & WndProc)
-
-        private void Form1_Paint(object? sender, PaintEventArgs e)
+        private void Form1_Paint(object sender, PaintEventArgs e)
         {
             if (!_isSolidBlack) return;
             Color frameColor = Color.DarkGray;
@@ -320,43 +265,56 @@ namespace SwitchRemoteGUI
 
         protected override void WndProc(ref Message m)
         {
+            const int WM_NCHITTEST = 0x84;
             base.WndProc(ref m);
-            // ボーダーレスウィンドウのリサイズ判定
             if (m.Msg == WM_NCHITTEST && !_isMenuOpen)
             {
                 Point pos = this.PointToClient(new Point(m.LParam.ToInt32()));
-                if (pos.X <= RESIZE_GRIP_SIZE && pos.Y <= RESIZE_GRIP_SIZE) m.Result = (IntPtr)13;
-                else if (pos.X >= this.ClientSize.Width - RESIZE_GRIP_SIZE && pos.Y <= RESIZE_GRIP_SIZE) m.Result = (IntPtr)14;
-                else if (pos.X <= RESIZE_GRIP_SIZE && pos.Y >= this.ClientSize.Height - RESIZE_GRIP_SIZE) m.Result = (IntPtr)16;
-                else if (pos.X >= this.ClientSize.Width - RESIZE_GRIP_SIZE && pos.Y >= this.ClientSize.Height - RESIZE_GRIP_SIZE) m.Result = (IntPtr)17;
-                else if (pos.X <= RESIZE_GRIP_SIZE) m.Result = (IntPtr)10;
-                else if (pos.X >= this.ClientSize.Width - RESIZE_GRIP_SIZE) m.Result = (IntPtr)11;
-                else if (pos.Y <= RESIZE_GRIP_SIZE) m.Result = (IntPtr)12;
-                else if (pos.Y >= this.ClientSize.Height - RESIZE_GRIP_SIZE) m.Result = (IntPtr)15;
+                if (pos.X <= resizeGrip && pos.Y <= resizeGrip) m.Result = (IntPtr)13;
+                else if (pos.X >= this.ClientSize.Width - resizeGrip && pos.Y <= resizeGrip) m.Result = (IntPtr)14;
+                else if (pos.X <= resizeGrip && pos.Y >= this.ClientSize.Height - resizeGrip) m.Result = (IntPtr)16;
+                else if (pos.X >= this.ClientSize.Width - resizeGrip && pos.Y >= this.ClientSize.Height - resizeGrip) m.Result = (IntPtr)17;
+                else if (pos.X <= resizeGrip) m.Result = (IntPtr)10;
+                else if (pos.X >= this.ClientSize.Width - resizeGrip) m.Result = (IntPtr)11;
+                else if (pos.Y <= resizeGrip) m.Result = (IntPtr)12;
+                else if (pos.Y >= this.ClientSize.Height - resizeGrip) m.Result = (IntPtr)15;
             }
         }
 
-        private void TopBar_MouseDown(object? sender, MouseEventArgs e)
+        private void TopBar_MouseDown(object sender, MouseEventArgs e)
         {
             if (e.Button == MouseButtons.Left) { ReleaseCapture(); SendMessage(Handle, 0xA1, 0x2, 0); }
         }
 
-        private void Form1_KeyDown(object? sender, KeyEventArgs e)
-        {
-            switch (e.KeyCode) { case Keys.Z: Send("z"); break; case Keys.X: Send("x"); break; }
-        }
-
-        protected override void OnFormClosed(FormClosedEventArgs e)
-        {
-            if (port != null && port.IsOpen) port.Close();
-            base.OnFormClosed(e);
-        }
-
         protected override void OnResize(EventArgs e) { base.OnResize(e); this.Invalidate(); UpdateLayout(); }
 
-        #endregion
+        // ★追加: 入力開始処理（マウス・キーボード共通）
+        void StartInput(string cmd)
+        {
+            // 既存のMkGame内のロジックをそのまま使用
+            if (_isHoldMode)
+            {
+                _repeatingCmd = cmd;
+                Send(cmd, true);
+                _repeatTimer.Start();
+            }
+            else
+            {
+                Send(cmd, false);
+            }
+        }
 
-        #region UI生成 (CreateUI)
+        // ★追加: 入力終了処理（マウス・キーボード共通）
+        void StopInput()
+        {
+            // 既存のMkGame内のロジックをそのまま使用
+            if (_isHoldMode)
+            {
+                _repeatTimer.Stop();
+                _repeatingCmd = "";
+            }
+            ClearBuffer();
+        }
 
         void CreateUI()
         {
@@ -397,33 +355,14 @@ namespace SwitchRemoteGUI
                 b.FlatAppearance.BorderSize = 0;
                 b.TabStop = false;
                 b.Opacity = 1.0f;
-                b.MouseDown += (s, e) => {
-                    // ★ロジック: isRepeat引数は無視され、_isHoldModeの状態だけで判定
-                    if (_isHoldMode)
-                    {
-                        _repeatingCmd = cmd;
-                        Send(cmd, true);
-                        _repeatTimer.Start();
-                    }
-                    else
-                    {
-                        Send(cmd, false);
-                    }
-                };
-                b.MouseUp += (s, e) => {
-                    if (_isHoldMode)
-                    {
-                        _repeatTimer.Stop();
-                        _repeatingCmd = "";
-                    }
-                    ClearBuffer();
-                };
+                // ★修正: 共通処理に流すように変更
+                b.MouseDown += (s, e) => StartInput(cmd);
+                b.MouseUp += (s, e) => StopInput();
                 this.Controls.Add(b);
                 return b;
             }
 
-            // --- UI配置 ---
-
+            // メイン画面
             btnLayoutToggle = MkBtn(this, "↻ 0°", Color.FromArgb(70, 70, 70), (s, e) => RotateLayout());
             btnLayoutToggle.ForeColor = Color.White;
             btnLayoutToggle.Opacity = 0.8f;
@@ -436,15 +375,17 @@ namespace SwitchRemoteGUI
             btnHoldToggle = MkBtn(this, "Hold: ON", Color.LightGreen, (s, e) => ToggleHoldMode());
             btnMenu = MkBtn(this, "MENU", Color.Orange, (s, e) => ToggleMenu());
 
+            // ショルダー
             btnZL = MkGame("ZL", "e", false, Color.DarkGray);
             btnL = MkGame("L", "q", false, Color.Gray);
             btnLR = MkGame("LR", "qw", false, Color.Orange);
             btnR = MkGame("R", "w", false, Color.Gray);
             btnZR = MkGame("ZR", "r", false, Color.DarkGray);
 
+            // ★修正: 斜めボタンも isRepeat = false に設定
             Color diagColor = Color.FromArgb(240, 240, 240);
             btnUpLeft = MkGame("↖", "IJ", false, diagColor);
-            btnUp = MkGame("↑", "I", false);
+            btnUp = MkGame("↑", "I", false); // 十字キーもfalse
             btnUpRight = MkGame("↗", "IL", false, diagColor);
             btnLeft = MkGame("←", "J", false);
             btnRight = MkGame("→", "L", false);
@@ -452,6 +393,7 @@ namespace SwitchRemoteGUI
             btnDown = MkGame("↓", "K", false);
             btnDownRight = MkGame("↘", "KL", false, diagColor);
 
+            // ABXY & 同時押し
             btnXY = MkGame("XY", "sa", false, diagColor);
             btnX = MkGame("X", "s", false, Color.Yellow);
             btnXA = MkGame("XA", "sz", false, diagColor);
@@ -469,6 +411,7 @@ namespace SwitchRemoteGUI
             btnL3 = MkGame("L3", "3", false, Color.Silver);
             btnR3 = MkGame("R3", "4", false, Color.Silver);
 
+            // メニュー内
             mBtnObs = MkBtn(pnlMenu, "OBS", Color.LightSkyBlue, (s, e) => { ControlApp("obs", true); ToggleMenu(); });
             mBtnHide = MkBtn(pnlMenu, "Hide", Color.LightGray, (s, e) => { ControlApp("obs", false); ToggleMenu(); });
             mBtnRot = MkBtn(pnlMenu, "Rotate", Color.White, (s, e) => { RotateLayout(); ToggleMenu(); });
@@ -478,17 +421,13 @@ namespace SwitchRemoteGUI
             mBtnClose = MkBtn(pnlMenu, "Close Menu", Color.Silver, (s, e) => ToggleMenu());
         }
 
-        #endregion
-
-        #region レイアウト計算 (UpdateLayout)
-
         void UpdateLayout()
         {
             if (!_isReady) return;
 
             int W = this.ClientSize.Width;
             int H = this.ClientSize.Height;
-            int pad = BORDER_SIZE;
+            int pad = borderSize;
             int innerW = W - pad * 2;
             int innerX = pad;
             int innerY = pad;
@@ -705,10 +644,70 @@ namespace SwitchRemoteGUI
             }
         }
 
-        #endregion
-    }
+        // ★追加: キーが押された時の処理
+        private void Form1_KeyDown(object sender, KeyEventArgs e)
+        {
+            // キーリピート（押しっぱなしで連打判定される機能）を無視
+            if (e.KeyCode == _currentPressedKey) return;
 
-    #region カスタムコントロール (Custom Controls)
+            string? cmd = null;
+
+            switch (e.KeyCode)
+            {
+                // WASD / 矢印
+                case Keys.W: case Keys.Up: cmd = "I"; break;
+                case Keys.A: case Keys.Left: cmd = "J"; break;
+                case Keys.S: case Keys.Down: cmd = "K"; break;
+                case Keys.D: case Keys.Right: cmd = "L"; break;
+
+                // ABXY
+                case Keys.Z: cmd = "z"; break; // A
+                case Keys.X: cmd = "x"; break; // B
+                case Keys.C: cmd = "a"; break; // Y
+                case Keys.V: cmd = "s"; break; // X
+
+                // ショルダー
+                case Keys.Q: cmd = "q"; break; // L
+                case Keys.E: cmd = "w"; break; // R
+                case Keys.D1: cmd = "e"; break; // ZL
+                case Keys.D3: cmd = "r"; break; // ZR
+
+                // 機能
+                case Keys.M: cmd = "m"; break; // -
+                case Keys.N: cmd = "n"; break; // +
+                case Keys.H: cmd = "h"; break; // Home
+                case Keys.P: cmd = "c"; break; // Capture
+
+                // その他
+                case Keys.Escape: ToggleMenu(); break;
+            }
+
+            if (cmd != null)
+            {
+                _currentPressedKey = e.KeyCode; // 押されているキーを記憶
+                StartInput(cmd); // 共通ロジックへ
+            }
+        }
+
+        // ★追加: キーが離された時の処理
+        private void Form1_KeyUp(object sender, KeyEventArgs e)
+        {
+            // 押していたキーが離された場合のみ停止処理を行う
+            if (e.KeyCode == _currentPressedKey)
+            {
+                StopInput(); // 共通ロジックへ
+                _currentPressedKey = Keys.None;
+            }
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            if (port != null && port.IsOpen) port.Close();
+            base.OnFormClosed(e);
+        }
+
+        void ConnectPort() { try { port = new SerialPort(portName, 9600); port.Open(); } catch { } }
+    }
 
     public class RotatableButton : Button
     {
@@ -774,6 +773,4 @@ namespace SwitchRemoteGUI
             }
         }
     }
-
-    #endregion
 }
