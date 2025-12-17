@@ -85,7 +85,7 @@ namespace SwitchRemoteGUI
         Keys _currentPressedKey = Keys.None;
 
         // UIコントロール
-        RotatableButton? btnLayoutToggle;
+        RotatableButton? btnLayoutToggle; // ※削除対象だが定義は残しても影響なし（nullのまま使用されない）
         RotatableButton? btnBgToggle;
         RotatableLabel? lblTitle;
 
@@ -106,7 +106,8 @@ namespace SwitchRemoteGUI
 
         Panel? pnlMenu;
         RotatableButton? mBtnObs, mBtnHide;
-        RotatableButton? mBtnRot, mBtnTrans;
+        RotatableButton? mBtnRot; // ※削除対象
+        RotatableButton? mBtnTrans;
         RotatableButton? mBtnFull, mBtnClose;
         RotatableButton? mBtnOp;
 
@@ -555,7 +556,8 @@ namespace SwitchRemoteGUI
 
             // ★追加: キー入力一覧パネル
             pnlKeyList = new Panel();
-            pnlKeyList.BackColor = Color.FromArgb(220, 30, 30, 30);
+            // ★変更: 背景を透明にする (元のコード: Color.FromArgb(220, 30, 30, 30))
+            pnlKeyList.BackColor = Color.Transparent;
             pnlKeyList.Visible = false;
             this.Controls.Add(pnlKeyList);
 
@@ -617,9 +619,10 @@ namespace SwitchRemoteGUI
             }
 
             // --- メイン画面 ---
-            btnLayoutToggle = MkBtn(this, "↻ 0°", Color.FromArgb(70, 70, 70), (s, e) => RotateLayout());
-            btnLayoutToggle.ForeColor = Color.White;
-            btnLayoutToggle.Opacity = 0.8f;
+            // ★変更: Rotateボタン(↻ 0°)を削除 (コメントアウト)
+            // btnLayoutToggle = MkBtn(this, "↻ 0°", Color.FromArgb(70, 70, 70), (s, e) => RotateLayout());
+            // btnLayoutToggle.ForeColor = Color.White;
+            // btnLayoutToggle.Opacity = 0.8f;
 
             btnBgToggle = MkBtn(this, "透過", Color.FromArgb(70, 70, 70), (s, e) => ToggleBlackMode());
             btnBgToggle.ForeColor = Color.White;
@@ -676,7 +679,10 @@ namespace SwitchRemoteGUI
             // メニュー内
             mBtnObs = MkBtn(pnlMenu, "OBS", Color.LightSkyBlue, (s, e) => { ControlApp("obs", true); ToggleMenu(); });
             mBtnHide = MkBtn(pnlMenu, "Hide OBS", Color.LightGray, (s, e) => { ControlApp("obs", false); ToggleMenu(); });
-            mBtnRot = MkBtn(pnlMenu, "Rotate", Color.White, (s, e) => { RotateLayout(); ToggleMenu(); });
+
+            // ★変更: メニュー内のRotateボタンを削除 (コメントアウト)
+            // mBtnRot = MkBtn(pnlMenu, "Rotate", Color.White, (s, e) => { RotateLayout(); ToggleMenu(); });
+
             mBtnTrans = MkBtn(pnlMenu, "Trans", Color.LightGray, (s, e) => { ToggleBlackMode(); ToggleMenu(); });
             mBtnFull = MkBtn(pnlMenu, "Full / Win", Color.LightCoral, (s, e) => { ToggleMaximize(); });
             mBtnOp = MkBtn(pnlMenu, $"Op: {(int)(_targetOpacity * 100)}%", Color.White, (s, e) => { ToggleOpacity(); });
@@ -747,7 +753,9 @@ namespace SwitchRemoteGUI
 
             int toggleW = (innerW - margin) / 4;
             if (btnBgToggle != null) rects[btnBgToggle] = new Rectangle(innerX + innerW - toggleW, innerY, toggleW, topBarH);
-            if (btnLayoutToggle != null) rects[btnLayoutToggle] = new Rectangle(innerX + innerW - toggleW * 2 - margin, innerY, toggleW, topBarH);
+
+            // ★変更: Rotateボタンの配置を削除
+            // if (btnLayoutToggle != null) rects[btnLayoutToggle] = new Rectangle(innerX + innerW - toggleW * 2 - margin, innerY, toggleW, topBarH);
 
             // ★追加: コントローラー非表示時の「Show GUI」ボタン配置（右上、タイトルバーの下）
             if (_isControllerHidden && btnShowController != null)
@@ -935,12 +943,16 @@ namespace SwitchRemoteGUI
             int btnW = (w - margin * (cols + 1)) / cols;
             int btnH = (h - margin * (rows + 1)) / rows;
 
-            // ★追加: mBtnKeysを追加
-            Control[] menuBtns = { mBtnObs, mBtnHide, mBtnRot, mBtnTrans, mBtnFull, mBtnOp, mBtnHideController, mBtnKeys, mBtnClose };
+            // ★追加: mBtnKeysを追加、mBtnRotを削除
+            Control?[] menuBtns = { mBtnObs, mBtnHide, null /*mBtnRot*/, mBtnTrans, mBtnFull, mBtnOp, mBtnHideController, mBtnKeys, mBtnClose };
+            // 配列からnullや削除済みのボタンを除去して詰める処理も可能ですが、
+            // ここではグリッド位置を維持するか、単純にリストから除外して詰めるか選べます。
+            // 今回は「mBtnRot」をリストから完全に削除し、後続のアイテムを詰めます。
+            Control?[] activeMenuBtns = { mBtnObs, mBtnHide, mBtnTrans, mBtnFull, mBtnOp, mBtnHideController, mBtnKeys, mBtnClose };
 
-            for (int i = 0; i < menuBtns.Length; i++)
+            for (int i = 0; i < activeMenuBtns.Length; i++)
             {
-                if (menuBtns[i] == null) continue;
+                if (activeMenuBtns[i] == null) continue;
                 int r = i / cols;
                 int c = i % cols;
 
@@ -951,11 +963,11 @@ namespace SwitchRemoteGUI
                     rect = new Rectangle(w - rect.X - rect.Width, h - rect.Y - rect.Height, rect.Width, rect.Height);
                 }
 
-                menuBtns[i].Bounds = rect;
-                if (menuBtns[i] is RotatableButton rb) rb.RotationAngle = _rotationAngle;
+                activeMenuBtns[i]!.Bounds = rect;
+                if (activeMenuBtns[i] is RotatableButton rb) rb.RotationAngle = _rotationAngle;
 
                 float fSize = Math.Max(12, Math.Min(btnW, btnH) / 6);
-                menuBtns[i].Font = new Font("Arial", fSize, FontStyle.Bold);
+                activeMenuBtns[i]!.Font = new Font("Arial", fSize, FontStyle.Bold);
             }
         }
 
