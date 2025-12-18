@@ -110,7 +110,7 @@ namespace SwitchRemoteGUI
         RotatableButton? mBtnFull, mBtnClose;
         RotatableButton? mBtnOp;
 
-        // ★追加: 左右寄せボタン
+        // 左右寄せボタン
         RotatableButton? mBtnLeft, mBtnRight;
 
         // メニュー内の非表示ボタン
@@ -468,7 +468,7 @@ namespace SwitchRemoteGUI
             UpdateLayout();
         }
 
-        // ★追加: 画面の左右に寄せる処理
+        // 画面の左右に寄せる処理
         void SetSnapLayout(bool isRight)
         {
             // 最大化などを解除
@@ -620,6 +620,8 @@ namespace SwitchRemoteGUI
                 b.TabStop = false;
                 b.Click += click;
                 b.Opacity = 1.0f;
+                // ★追加: 文字色を黒に明示的に設定（デフォルト継承だと深色背景で見えなくなる恐れがあるため）
+                b.ForeColor = Color.Black;
                 parent.Controls.Add(b);
                 return b;
             }
@@ -634,6 +636,7 @@ namespace SwitchRemoteGUI
                 b.FlatAppearance.BorderSize = 0;
                 b.TabStop = false;
                 b.Opacity = 1.0f;
+                b.ForeColor = Color.Black; // ★追加
 
                 // 共通処理(StartInput)に流す
                 b.MouseDown += (s, e) => StartInput(cmd);
@@ -708,7 +711,7 @@ namespace SwitchRemoteGUI
             mBtnFull = MkBtn(pnlMenu, "Full / Win", Color.LightCoral, (s, e) => { ToggleMaximize(); });
             mBtnOp = MkBtn(pnlMenu, $"Op: {(int)(_targetOpacity * 100)}%", Color.White, (s, e) => { ToggleOpacity(); });
 
-            // ★追加: 左寄せ・右寄せボタン
+            // 左右寄せボタン
             mBtnLeft = MkBtn(pnlMenu, "← Snap", Color.LightSeaGreen, (s, e) => { SetSnapLayout(false); ToggleMenu(); });
             mBtnRight = MkBtn(pnlMenu, "Snap →", Color.LightSeaGreen, (s, e) => { SetSnapLayout(true); ToggleMenu(); });
 
@@ -959,21 +962,39 @@ namespace SwitchRemoteGUI
         {
             if (pnlMenu == null) return;
 
-            // ★変更: ボタンが増えたので 3列 -> 4列 に変更
+            // 画面幅400px未満を「狭いモード」と判定し、ボタンの文字を短縮する
+            bool narrow = w < 400;
+
+            // ボタンラベルの切り替え (短縮形 vs フル名称)
+            if (mBtnObs != null) mBtnObs.Text = narrow ? "O" : "OBS";
+            if (mBtnHide != null) mBtnHide.Text = narrow ? "H" : "Hide OBS";
+            if (mBtnRot != null) mBtnRot.Text = narrow ? "R" : $"Rot: {_rotationAngle}°";
+            if (mBtnTrans != null) mBtnTrans.Text = narrow ? "T" : (_isSolidBlack ? "Trans" : "Black");
+            if (mBtnFull != null) mBtnFull.Text = narrow ? "F" : "Full / Win";
+            if (mBtnOp != null) mBtnOp.Text = narrow ? $"{(int)(_targetOpacity * 100)}%" : $"Op: {(int)(_targetOpacity * 100)}%";
+
+            if (mBtnLeft != null) mBtnLeft.Text = "←";
+            if (mBtnRight != null) mBtnRight.Text = "→";
+
+            if (mBtnHideController != null) mBtnHideController.Text = narrow ? "G" : "Hide GUI";
+            if (mBtnKeys != null) mBtnKeys.Text = narrow ? "K" : "Keys";
+            if (mBtnClose != null) mBtnClose.Text = narrow ? "×" : "Close Menu";
+
+            // 文字を短くしたので、狭い画面でも4列レイアウトを維持できる
             int cols = 4;
-            // 行数は自動計算されるようにするか、固定値を増やす
-            int rows = 3;
+
+            Control?[] menuBtns = {
+                mBtnObs, mBtnHide, mBtnRot, mBtnTrans,
+                mBtnFull, mBtnOp, mBtnLeft, mBtnRight,
+                mBtnHideController, mBtnKeys, mBtnClose, null
+            };
+
+            // 行数を要素数に合わせて自動計算
+            int rows = (int)Math.Ceiling((double)menuBtns.Length / cols);
 
             int margin = 10;
             int btnW = (w - margin * (cols + 1)) / cols;
             int btnH = (h - margin * (rows + 1)) / rows;
-
-            // ★変更: 配列に mBtnLeft, mBtnRight を追加
-            Control?[] menuBtns = {
-                mBtnObs, mBtnHide, mBtnRot, mBtnTrans,
-                mBtnFull, mBtnOp, mBtnLeft, mBtnRight, // ここに追加
-                mBtnHideController, mBtnKeys, mBtnClose, null // 最後は空き
-            };
 
             for (int i = 0; i < menuBtns.Length; i++)
             {
@@ -1013,16 +1034,37 @@ namespace SwitchRemoteGUI
         }
         protected override CreateParams CreateParams { get { CreateParams cp = base.CreateParams; cp.ExStyle |= 0x20; return cp; } }
         protected override void OnResize(EventArgs e) { base.OnResize(e); UpdateShape(); }
+
+        // ★修正: 縦長(h > w)の場合でも正しくカプセル型を描画できるように修正
         private void UpdateShape()
         {
             int w = this.Width; int h = this.Height;
             if (w < 1 || h < 1) return;
 
-            int d = Math.Min(w, h); GraphicsPath path = new GraphicsPath();
-            if (Math.Abs(w - h) < 5) path.AddEllipse(0, 0, d, d);
-            else { int r = d; path.AddArc(0, 0, r, r, 90, 180); path.AddArc(w - r, 0, r, r, 270, 180); path.CloseFigure(); }
+            GraphicsPath path = new GraphicsPath();
+
+            if (Math.Abs(w - h) < 5) // 正円に近い場合
+            {
+                int d = Math.Min(w, h);
+                path.AddEllipse((w - d) / 2, (h - d) / 2, d, d);
+            }
+            else if (w > h) // 横長 (Horizontal Capsule)
+            {
+                int d = h;
+                path.AddArc(0, 0, d, d, 90, 180);
+                path.AddArc(w - d, 0, d, d, 270, 180);
+            }
+            else // 縦長 (Vertical Capsule) - ★ここが抜けていたため縦長の時に描画が壊れていた
+            {
+                int d = w;
+                path.AddArc(0, 0, d, d, 180, 180); // 上半円
+                path.AddArc(0, h - d, d, d, 0, 180); // 下半円
+            }
+
+            path.CloseFigure();
             this.Region = new Region(path);
         }
+
         protected override void OnPaint(PaintEventArgs pevent)
         {
             Graphics g = pevent.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
