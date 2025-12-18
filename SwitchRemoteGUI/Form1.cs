@@ -68,10 +68,10 @@ namespace SwitchRemoteGUI
         bool _isHoldMode = true;
         bool _isMenuOpen = false;
 
-        // ★変更: デフォルトでCustomボタンを非表示にする
+        // デフォルトでCustomボタンを非表示にする
         bool _showCustomButtons = false;
 
-        // ★追加: コントローラー非表示フラグ
+        // コントローラー非表示フラグ
         bool _isControllerHidden = false;
 
         double _targetOpacity = 0.3;
@@ -85,11 +85,11 @@ namespace SwitchRemoteGUI
         Keys _currentPressedKey = Keys.None;
 
         // UIコントロール
-        RotatableButton? btnLayoutToggle; // ※削除対象だが定義は残しても影響なし（nullのまま使用されない）
+        RotatableButton? btnLayoutToggle;
         RotatableButton? btnBgToggle;
         RotatableLabel? lblTitle;
 
-        // ★追加: 再表示用ボタン
+        // 再表示用ボタン
         RotatableButton? btnShowController;
 
         RotatableButton? btnCustom;
@@ -106,15 +106,17 @@ namespace SwitchRemoteGUI
 
         Panel? pnlMenu;
         RotatableButton? mBtnObs, mBtnHide;
-        RotatableButton? mBtnRot; // ※削除対象
-        RotatableButton? mBtnTrans;
+        RotatableButton? mBtnRot, mBtnTrans;
         RotatableButton? mBtnFull, mBtnClose;
         RotatableButton? mBtnOp;
 
-        // ★追加: メニュー内の非表示ボタン
+        // ★追加: 左右寄せボタン
+        RotatableButton? mBtnLeft, mBtnRight;
+
+        // メニュー内の非表示ボタン
         RotatableButton? mBtnHideController;
 
-        // ★追加: キー入力一覧用
+        // キー入力一覧用
         RotatableButton? mBtnKeys;
         Panel? pnlKeyList;
         RotatableLabel? lblKeyList;
@@ -143,7 +145,7 @@ namespace SwitchRemoteGUI
             // イベント設定
             this.KeyPreview = true;
             this.KeyDown += Form1_KeyDown;
-            this.KeyUp += Form1_KeyUp; // ★追加
+            this.KeyUp += Form1_KeyUp;
             this.Paint += Form1_Paint;
 
             ConnectPort();
@@ -158,10 +160,9 @@ namespace SwitchRemoteGUI
 
         #region 入力ロジック (Input Logic)
 
-        // ★追加: 入力開始 (マウス・キーボード共通)
+        // 入力開始 (マウス・キーボード共通)
         void StartInput(string cmd)
         {
-            // 既存のMkGame内にあったロジックをそのまま使用
             if (_isHoldMode)
             {
                 // Hold ON: 即時送信 -> Delay -> 高速連射
@@ -178,7 +179,7 @@ namespace SwitchRemoteGUI
             }
         }
 
-        // ★追加: 入力終了 (マウス・キーボード共通)
+        // 入力終了 (マウス・キーボード共通)
         void StopInput()
         {
             if (_isHoldMode)
@@ -245,7 +246,7 @@ namespace SwitchRemoteGUI
 
         #region キーボード入力制御 (Keyboard Input)
 
-        // ★追加: キー押下時
+        // キー押下時
         private void Form1_KeyDown(object? sender, KeyEventArgs e)
         {
             // キーリピート防止
@@ -256,9 +257,9 @@ namespace SwitchRemoteGUI
             if (cmd != null)
             {
                 _currentPressedKey = e.KeyCode;
-                StartInput(cmd); // 共通ロジックへ
+                StartInput(cmd);
             }
-            // ★変更: MenuキーをESCからTabに変更
+            // MenuキーをTabに変更
             else if (e.KeyCode == Keys.Tab)
             {
                 e.SuppressKeyPress = true; // Tabによるフォーカス移動や音を抑制
@@ -268,17 +269,17 @@ namespace SwitchRemoteGUI
             }
         }
 
-        // ★追加: キー離上時
+        // キー離上時
         private void Form1_KeyUp(object? sender, KeyEventArgs e)
         {
             if (e.KeyCode == _currentPressedKey)
             {
-                StopInput(); // 共通ロジックへ
+                StopInput();
                 _currentPressedKey = Keys.None;
             }
         }
 
-        // ★追加: キー割り当て
+        // キー割り当て
         private string? GetCommandFromKey(Keys key)
         {
             switch (key)
@@ -364,7 +365,7 @@ namespace SwitchRemoteGUI
             }
         }
 
-        // ★追加: コントローラー表示・非表示の切り替え
+        // コントローラー表示・非表示の切り替え
         void SetControllerVisibility(bool visible)
         {
             _isControllerHidden = !visible;
@@ -414,7 +415,7 @@ namespace SwitchRemoteGUI
             }
         }
 
-        // ★追加: Customボタンの表示反映処理（非表示モード対応）
+        // Customボタンの表示反映処理（非表示モード対応）
         void ApplyCustomButtonVisibility()
         {
             Control?[] customs = {
@@ -464,6 +465,31 @@ namespace SwitchRemoteGUI
 
             _isMenuOpen = false;
             if (pnlMenu != null) pnlMenu.Visible = false;
+            UpdateLayout();
+        }
+
+        // ★追加: 画面の左右に寄せる処理
+        void SetSnapLayout(bool isRight)
+        {
+            // 最大化などを解除
+            if (this.WindowState == FormWindowState.Maximized)
+                this.WindowState = FormWindowState.Normal;
+
+            // 現在ウィンドウがあるスクリーンを取得
+            Screen scr = Screen.FromControl(this);
+            Rectangle area = scr.WorkingArea;
+
+            // 幅は画面の1/4、高さは画面いっぱい
+            int w = area.Width / 4;
+            int h = area.Height;
+
+            // 最小幅のガード（念のため200px確保）
+            if (w < 200) w = 200;
+
+            int x = isRight ? (area.Right - w) : area.Left;
+            int y = area.Top;
+
+            this.Bounds = new Rectangle(x, y, w, h);
             UpdateLayout();
         }
 
@@ -554,14 +580,13 @@ namespace SwitchRemoteGUI
             pnlMenu.Visible = false;
             this.Controls.Add(pnlMenu);
 
-            // ★追加: キー入力一覧パネル
+            // キー入力一覧パネル
             pnlKeyList = new Panel();
-            // ★変更: 背景を透明にする (元のコード: Color.FromArgb(220, 30, 30, 30))
-            pnlKeyList.BackColor = Color.Transparent;
+            pnlKeyList.BackColor = Color.FromArgb(220, 30, 30, 30);
             pnlKeyList.Visible = false;
             this.Controls.Add(pnlKeyList);
 
-            // ★追加: キー入力一覧ラベル
+            // キー入力一覧ラベル
             lblKeyList = new RotatableLabel();
             lblKeyList.Text = "--- Keyboard Mapping ---\n\n" +
                               "Move: W/A/S/D or Arrows\n" +
@@ -570,7 +595,7 @@ namespace SwitchRemoteGUI
                               "L+R: 2   L3: F   R3: 4\n" +
                               "-: M   +: N\n" +
                               "Home: H   Capture: P\n" +
-                              "Menu: Tab"; // ★変更: ESC -> Tab
+                              "Menu: Tab";
             lblKeyList.ForeColor = Color.White;
             lblKeyList.BackColor = Color.Transparent;
             lblKeyList.TextAlign = ContentAlignment.MiddleCenter;
@@ -610,7 +635,7 @@ namespace SwitchRemoteGUI
                 b.TabStop = false;
                 b.Opacity = 1.0f;
 
-                // ★修正: 共通処理(StartInput)に流す
+                // 共通処理(StartInput)に流す
                 b.MouseDown += (s, e) => StartInput(cmd);
                 b.MouseUp += (s, e) => StopInput();
 
@@ -619,20 +644,19 @@ namespace SwitchRemoteGUI
             }
 
             // --- メイン画面 ---
-            // ★変更: Rotateボタン(↻ 0°)を削除 (コメントアウト)
-            // btnLayoutToggle = MkBtn(this, "↻ 0°", Color.FromArgb(70, 70, 70), (s, e) => RotateLayout());
-            // btnLayoutToggle.ForeColor = Color.White;
-            // btnLayoutToggle.Opacity = 0.8f;
+            btnLayoutToggle = MkBtn(this, "↻ 0°", Color.FromArgb(70, 70, 70), (s, e) => RotateLayout());
+            btnLayoutToggle.ForeColor = Color.White;
+            btnLayoutToggle.Opacity = 0.8f;
 
             btnBgToggle = MkBtn(this, "透過", Color.FromArgb(70, 70, 70), (s, e) => ToggleBlackMode());
             btnBgToggle.ForeColor = Color.White;
             btnBgToggle.Opacity = 0.8f;
 
-            // ★追加: 再表示用ボタン (初期は非表示)
+            // 再表示用ボタン (初期は非表示)
             btnShowController = MkBtn(this, "Show GUI", Color.LightYellow, (s, e) => SetControllerVisibility(true));
             btnShowController.Visible = false;
 
-            // ★変更: 初期状態(_showCustomButtons)に合わせてボタンを作成
+            // 初期状態(_showCustomButtons)に合わせてボタンを作成
             btnCustom = MkBtn(this, _showCustomButtons ? "Custom: ON" : "Custom: OFF",
                                     _showCustomButtons ? Color.Gold : Color.Wheat,
                                     (s, e) => ToggleCustomButtons());
@@ -679,27 +703,28 @@ namespace SwitchRemoteGUI
             // メニュー内
             mBtnObs = MkBtn(pnlMenu, "OBS", Color.LightSkyBlue, (s, e) => { ControlApp("obs", true); ToggleMenu(); });
             mBtnHide = MkBtn(pnlMenu, "Hide OBS", Color.LightGray, (s, e) => { ControlApp("obs", false); ToggleMenu(); });
-
-            // ★変更: メニュー内のRotateボタンを削除 (コメントアウト)
-            // mBtnRot = MkBtn(pnlMenu, "Rotate", Color.White, (s, e) => { RotateLayout(); ToggleMenu(); });
-
+            mBtnRot = MkBtn(pnlMenu, "Rotate", Color.White, (s, e) => { RotateLayout(); ToggleMenu(); });
             mBtnTrans = MkBtn(pnlMenu, "Trans", Color.LightGray, (s, e) => { ToggleBlackMode(); ToggleMenu(); });
             mBtnFull = MkBtn(pnlMenu, "Full / Win", Color.LightCoral, (s, e) => { ToggleMaximize(); });
             mBtnOp = MkBtn(pnlMenu, $"Op: {(int)(_targetOpacity * 100)}%", Color.White, (s, e) => { ToggleOpacity(); });
 
-            // ★追加: GUI非表示ボタン
+            // ★追加: 左寄せ・右寄せボタン
+            mBtnLeft = MkBtn(pnlMenu, "← Snap", Color.LightSeaGreen, (s, e) => { SetSnapLayout(false); ToggleMenu(); });
+            mBtnRight = MkBtn(pnlMenu, "Snap →", Color.LightSeaGreen, (s, e) => { SetSnapLayout(true); ToggleMenu(); });
+
+            // GUI非表示ボタン
             mBtnHideController = MkBtn(pnlMenu, "Hide GUI", Color.Plum, (s, e) => SetControllerVisibility(false));
 
-            // ★追加: キー入力一覧ボタン
+            // キー入力一覧ボタン
             mBtnKeys = MkBtn(pnlMenu, "Keys", Color.LightGoldenrodYellow, (s, e) => { ToggleKeyList(); });
 
             mBtnClose = MkBtn(pnlMenu, "Close Menu", Color.Silver, (s, e) => ToggleMenu());
 
-            // ★追加: キー一覧閉じるボタン
+            // キー一覧閉じるボタン
             if (pnlKeyList != null)
                 btnKeyListClose = MkBtn(pnlKeyList, "Close", Color.Silver, (s, e) => ToggleKeyList());
 
-            // ★追加: Customボタンの初期状態（OFF）を反映して不要なボタンを隠す
+            // Customボタンの初期状態（OFF）を反映して不要なボタンを隠す
             ApplyCustomButtonVisibility();
         }
 
@@ -721,7 +746,7 @@ namespace SwitchRemoteGUI
             int margin = 5;
 
             if (pnlMenu != null) pnlMenu.Bounds = new Rectangle(innerX, innerY, innerW, H - pad * 2);
-            // ★追加: キー一覧パネル
+            // キー一覧パネル
             if (pnlKeyList != null)
             {
                 pnlKeyList.Bounds = new Rectangle(innerX, innerY, innerW, H - pad * 2);
@@ -753,11 +778,9 @@ namespace SwitchRemoteGUI
 
             int toggleW = (innerW - margin) / 4;
             if (btnBgToggle != null) rects[btnBgToggle] = new Rectangle(innerX + innerW - toggleW, innerY, toggleW, topBarH);
+            if (btnLayoutToggle != null) rects[btnLayoutToggle] = new Rectangle(innerX + innerW - toggleW * 2 - margin, innerY, toggleW, topBarH);
 
-            // ★変更: Rotateボタンの配置を削除
-            // if (btnLayoutToggle != null) rects[btnLayoutToggle] = new Rectangle(innerX + innerW - toggleW * 2 - margin, innerY, toggleW, topBarH);
-
-            // ★追加: コントローラー非表示時の「Show GUI」ボタン配置（右上、タイトルバーの下）
+            // コントローラー非表示時の「Show GUI」ボタン配置（右上、タイトルバーの下）
             if (_isControllerHidden && btnShowController != null)
             {
                 int showW = 120;
@@ -936,23 +959,25 @@ namespace SwitchRemoteGUI
         {
             if (pnlMenu == null) return;
 
-            // ★変更: キー入力一覧ボタンが増えたので 3x3 に変更
-            int cols = 3;
+            // ★変更: ボタンが増えたので 3列 -> 4列 に変更
+            int cols = 4;
+            // 行数は自動計算されるようにするか、固定値を増やす
             int rows = 3;
+
             int margin = 10;
             int btnW = (w - margin * (cols + 1)) / cols;
             int btnH = (h - margin * (rows + 1)) / rows;
 
-            // ★追加: mBtnKeysを追加、mBtnRotを削除
-            Control?[] menuBtns = { mBtnObs, mBtnHide, null /*mBtnRot*/, mBtnTrans, mBtnFull, mBtnOp, mBtnHideController, mBtnKeys, mBtnClose };
-            // 配列からnullや削除済みのボタンを除去して詰める処理も可能ですが、
-            // ここではグリッド位置を維持するか、単純にリストから除外して詰めるか選べます。
-            // 今回は「mBtnRot」をリストから完全に削除し、後続のアイテムを詰めます。
-            Control?[] activeMenuBtns = { mBtnObs, mBtnHide, mBtnTrans, mBtnFull, mBtnOp, mBtnHideController, mBtnKeys, mBtnClose };
+            // ★変更: 配列に mBtnLeft, mBtnRight を追加
+            Control?[] menuBtns = {
+                mBtnObs, mBtnHide, mBtnRot, mBtnTrans,
+                mBtnFull, mBtnOp, mBtnLeft, mBtnRight, // ここに追加
+                mBtnHideController, mBtnKeys, mBtnClose, null // 最後は空き
+            };
 
-            for (int i = 0; i < activeMenuBtns.Length; i++)
+            for (int i = 0; i < menuBtns.Length; i++)
             {
-                if (activeMenuBtns[i] == null) continue;
+                if (menuBtns[i] == null) continue;
                 int r = i / cols;
                 int c = i % cols;
 
@@ -963,11 +988,11 @@ namespace SwitchRemoteGUI
                     rect = new Rectangle(w - rect.X - rect.Width, h - rect.Y - rect.Height, rect.Width, rect.Height);
                 }
 
-                activeMenuBtns[i]!.Bounds = rect;
-                if (activeMenuBtns[i] is RotatableButton rb) rb.RotationAngle = _rotationAngle;
+                menuBtns[i].Bounds = rect;
+                if (menuBtns[i] is RotatableButton rb) rb.RotationAngle = _rotationAngle;
 
-                float fSize = Math.Max(12, Math.Min(btnW, btnH) / 6);
-                activeMenuBtns[i]!.Font = new Font("Arial", fSize, FontStyle.Bold);
+                float fSize = Math.Max(10, Math.Min(btnW, btnH) / 6);
+                menuBtns[i].Font = new Font("Arial", fSize, FontStyle.Bold);
             }
         }
 
