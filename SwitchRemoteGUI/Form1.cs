@@ -68,6 +68,9 @@ namespace SwitchRemoteGUI
         bool _isHoldMode = true;
         bool _isMenuOpen = false;
 
+        // スナップモード（左右寄せ時）のフラグ
+        bool _isSnapMode = false;
+
         // デフォルトでCustomボタンを非表示にする
         bool _showCustomButtons = false;
 
@@ -85,14 +88,13 @@ namespace SwitchRemoteGUI
         Keys _currentPressedKey = Keys.None;
 
         // UIコントロール
-        RotatableButton? btnLayoutToggle;
-        RotatableButton? btnBgToggle;
         RotatableLabel? lblTitle;
 
         // 再表示用ボタン
         RotatableButton? btnShowController;
 
-        RotatableButton? btnCustom;
+        // メイン画面のCustomボタンは削除し、メニューへ移動
+        // RotatableButton? btnCustom; 
         RotatableButton? btnHoldToggle;
         RotatableButton? btnMenu;
 
@@ -106,9 +108,11 @@ namespace SwitchRemoteGUI
 
         Panel? pnlMenu;
         RotatableButton? mBtnObs, mBtnHide;
-        RotatableButton? mBtnRot, mBtnTrans;
         RotatableButton? mBtnFull, mBtnClose;
         RotatableButton? mBtnOp;
+
+        // メニュー内に追加するCustom切り替えボタン
+        RotatableButton? mBtnCustom;
 
         // 左右寄せボタン
         RotatableButton? mBtnLeft, mBtnRight;
@@ -140,7 +144,7 @@ namespace SwitchRemoteGUI
             _repeatTimer.Tick += RepeatTimer_Tick;
 
             this.Padding = new Padding(BORDER_SIZE);
-            SetTransparentMode();
+            SetTransparentMode(); // 初期状態で透過モード
 
             // イベント設定
             this.KeyPreview = true;
@@ -378,7 +382,8 @@ namespace SwitchRemoteGUI
 
             // コントローラーパーツの表示切替
             Control?[] ctrls = {
-                btnCustom, btnHoldToggle, btnMenu,
+                // btnCustom, // メイン画面から削除済み
+                btnHoldToggle, btnMenu,
                 btnZL, btnL, btnLR, btnR, btnZR,
                 btnUp, btnLeft, btnDown, btnRight,
                 btnUpLeft, btnUpRight, btnDownLeft, btnDownRight,
@@ -393,8 +398,9 @@ namespace SwitchRemoteGUI
                 if (c != null) c.Visible = visible;
             }
 
-            // Customボタンの表示状態はフラグに従って復元
-            if (visible) ToggleCustomButtons();
+            // ★修正: 表示時にToggle(切り替え)せず、現在のフラグ状態に従って適用するのみにする
+            // これで「ShowGUIを押すとCustomが勝手にONになる」現象を防ぐ
+            if (visible) ApplyCustomButtonVisibility();
 
             UpdateLayout();
         }
@@ -404,25 +410,30 @@ namespace SwitchRemoteGUI
             // 非表示モード中なら処理しない
             if (_isControllerHidden) return;
 
-            // 既存ロジックを再利用
+            // スナップモード中は切り替えを無効化する
+            if (_isSnapMode) return;
+
+            // フラグを反転させる（ここが唯一のON/OFF切り替え箇所）
             _showCustomButtons = !_showCustomButtons;
             ApplyCustomButtonVisibility();
 
-            if (btnCustom != null)
+            // メニュー内のボタンの見た目を更新
+            if (mBtnCustom != null)
             {
-                btnCustom.Text = _showCustomButtons ? "Custom: ON" : "Custom: OFF";
-                btnCustom.BackColor = _showCustomButtons ? Color.Gold : Color.Wheat;
+                mBtnCustom.Text = _showCustomButtons ? "Custom: ON" : "Custom: OFF";
+                mBtnCustom.BackColor = _showCustomButtons ? Color.Gold : Color.Wheat;
             }
         }
 
-        // Customボタンの表示反映処理（非表示モード対応）
+        // Customボタンの表示反映処理
         void ApplyCustomButtonVisibility()
         {
             Control?[] customs = {
                 btnUpLeft, btnUpRight, btnDownLeft, btnDownRight,
                 btnXY, btnXA, btnAB, btnYB
             };
-            foreach (var btn in customs) if (btn != null) btn.Visible = _showCustomButtons && !_isControllerHidden;
+            // スナップモード中は強制非表示（フラグは変えない）
+            foreach (var btn in customs) if (btn != null) btn.Visible = _showCustomButtons && !_isControllerHidden && !_isSnapMode;
         }
 
         void RotateLayout()
@@ -434,16 +445,7 @@ namespace SwitchRemoteGUI
                 int currentH = this.Height;
                 this.Size = new Size(currentH, currentW);
             }
-            if (mBtnRot != null) mBtnRot.Text = $"Rot: {_rotationAngle}°";
             UpdateLayout();
-        }
-
-        void ToggleBlackMode()
-        {
-            if (_isSolidBlack) { SetTransparentMode(); if (mBtnTrans != null) mBtnTrans.Text = "Trans"; }
-            else { SetSolidBlackMode(); if (mBtnTrans != null) mBtnTrans.Text = "Black"; }
-            if (mBtnTrans != null) mBtnTrans.BackColor = _isSolidBlack ? Color.Gray : Color.LightGray;
-            this.TopMost = true;
         }
 
         void ToggleHoldMode()
@@ -464,6 +466,9 @@ namespace SwitchRemoteGUI
                 this.WindowState = FormWindowState.Maximized;
 
             _isMenuOpen = false;
+            _isSnapMode = false; // 最大化したらスナップ解除
+            ApplyCustomButtonVisibility(); // カスタムボタン状態復元
+
             if (pnlMenu != null) pnlMenu.Visible = false;
             UpdateLayout();
         }
@@ -475,6 +480,13 @@ namespace SwitchRemoteGUI
             if (this.WindowState == FormWindowState.Maximized)
                 this.WindowState = FormWindowState.Normal;
 
+            // スナップモード有効化
+            _isSnapMode = true;
+
+            // ★修正: スナップ時に勝手にフラグを変更しない。
+            // Customボタンは ApplyCustomButtonVisibility 内で _isSnapMode を見て非表示になる。
+            ApplyCustomButtonVisibility();
+
             // 現在ウィンドウがあるスクリーンを取得
             Screen scr = Screen.FromControl(this);
             Rectangle area = scr.WorkingArea;
@@ -483,7 +495,7 @@ namespace SwitchRemoteGUI
             int w = area.Width / 4;
             int h = area.Height;
 
-            // 最小幅のガード（念のため200px確保）
+            // 最小幅のガード
             if (w < 200) w = 200;
 
             int x = isRight ? (area.Right - w) : area.Left;
@@ -512,15 +524,6 @@ namespace SwitchRemoteGUI
             this.TransparencyKey = keyColor;
             this.Opacity = _targetOpacity;
             _isSolidBlack = false;
-            this.Invalidate();
-        }
-
-        void SetSolidBlackMode()
-        {
-            this.TransparencyKey = Color.Empty;
-            this.BackColor = Color.Black;
-            this.Opacity = 1.0;
-            _isSolidBlack = true;
             this.Invalidate();
         }
 
@@ -620,13 +623,13 @@ namespace SwitchRemoteGUI
                 b.TabStop = false;
                 b.Click += click;
                 b.Opacity = 1.0f;
-                // ★追加: 文字色を黒に明示的に設定（デフォルト継承だと深色背景で見えなくなる恐れがあるため）
+                // 文字色を黒に設定
                 b.ForeColor = Color.Black;
                 parent.Controls.Add(b);
                 return b;
             }
 
-            // ゲームボタン生成 (isRepeatは無視し、共通ロジックを使用)
+            // ゲームボタン生成
             RotatableButton MkGame(string txt, string cmd, bool isRepeat, Color? bg = null)
             {
                 RotatableButton b = new RotatableButton();
@@ -636,9 +639,8 @@ namespace SwitchRemoteGUI
                 b.FlatAppearance.BorderSize = 0;
                 b.TabStop = false;
                 b.Opacity = 1.0f;
-                b.ForeColor = Color.Black; // ★追加
+                b.ForeColor = Color.Black;
 
-                // 共通処理(StartInput)に流す
                 b.MouseDown += (s, e) => StartInput(cmd);
                 b.MouseUp += (s, e) => StopInput();
 
@@ -647,22 +649,12 @@ namespace SwitchRemoteGUI
             }
 
             // --- メイン画面 ---
-            btnLayoutToggle = MkBtn(this, "↻ 0°", Color.FromArgb(70, 70, 70), (s, e) => RotateLayout());
-            btnLayoutToggle.ForeColor = Color.White;
-            btnLayoutToggle.Opacity = 0.8f;
-
-            btnBgToggle = MkBtn(this, "透過", Color.FromArgb(70, 70, 70), (s, e) => ToggleBlackMode());
-            btnBgToggle.ForeColor = Color.White;
-            btnBgToggle.Opacity = 0.8f;
 
             // 再表示用ボタン (初期は非表示)
             btnShowController = MkBtn(this, "Show GUI", Color.LightYellow, (s, e) => SetControllerVisibility(true));
             btnShowController.Visible = false;
 
-            // 初期状態(_showCustomButtons)に合わせてボタンを作成
-            btnCustom = MkBtn(this, _showCustomButtons ? "Custom: ON" : "Custom: OFF",
-                                    _showCustomButtons ? Color.Gold : Color.Wheat,
-                                    (s, e) => ToggleCustomButtons());
+            // メイン画面にあったbtnCustomは削除。
 
             btnHoldToggle = MkBtn(this, "Hold: ON", Color.LightGreen, (s, e) => ToggleHoldMode());
             btnMenu = MkBtn(this, "MENU", Color.Orange, (s, e) => ToggleMenu());
@@ -706,14 +698,18 @@ namespace SwitchRemoteGUI
             // メニュー内
             mBtnObs = MkBtn(pnlMenu, "OBS", Color.LightSkyBlue, (s, e) => { ControlApp("obs", true); ToggleMenu(); });
             mBtnHide = MkBtn(pnlMenu, "Hide OBS", Color.LightGray, (s, e) => { ControlApp("obs", false); ToggleMenu(); });
-            mBtnRot = MkBtn(pnlMenu, "Rotate", Color.White, (s, e) => { RotateLayout(); ToggleMenu(); });
-            mBtnTrans = MkBtn(pnlMenu, "Trans", Color.LightGray, (s, e) => { ToggleBlackMode(); ToggleMenu(); });
+
             mBtnFull = MkBtn(pnlMenu, "Full / Win", Color.LightCoral, (s, e) => { ToggleMaximize(); });
             mBtnOp = MkBtn(pnlMenu, $"Op: {(int)(_targetOpacity * 100)}%", Color.White, (s, e) => { ToggleOpacity(); });
 
             // 左右寄せボタン
             mBtnLeft = MkBtn(pnlMenu, "← Snap", Color.LightSeaGreen, (s, e) => { SetSnapLayout(false); ToggleMenu(); });
             mBtnRight = MkBtn(pnlMenu, "Snap →", Color.LightSeaGreen, (s, e) => { SetSnapLayout(true); ToggleMenu(); });
+
+            // Custom切り替えボタン（メニュー内）
+            mBtnCustom = MkBtn(pnlMenu, _showCustomButtons ? "Custom: ON" : "Custom: OFF",
+                                    _showCustomButtons ? Color.Gold : Color.Wheat,
+                                    (s, e) => ToggleCustomButtons());
 
             // GUI非表示ボタン
             mBtnHideController = MkBtn(pnlMenu, "Hide GUI", Color.Plum, (s, e) => SetControllerVisibility(false));
@@ -779,11 +775,7 @@ namespace SwitchRemoteGUI
 
             if (lblTitle != null) rects[lblTitle] = new Rectangle(innerX, innerY, innerW, topBarH);
 
-            int toggleW = (innerW - margin) / 4;
-            if (btnBgToggle != null) rects[btnBgToggle] = new Rectangle(innerX + innerW - toggleW, innerY, toggleW, topBarH);
-            if (btnLayoutToggle != null) rects[btnLayoutToggle] = new Rectangle(innerX + innerW - toggleW * 2 - margin, innerY, toggleW, topBarH);
-
-            // コントローラー非表示時の「Show GUI」ボタン配置（右上、タイトルバーの下）
+            // コントローラー非表示時の「Show GUI」ボタン配置
             if (_isControllerHidden && btnShowController != null)
             {
                 int showW = 120;
@@ -800,16 +792,19 @@ namespace SwitchRemoteGUI
 
             if (!_isControllerHidden)
             {
-                if (_rotationAngle == 90 || _rotationAngle == 270)
+                // スナップモードまたは縦回転時のレイアウト
+                if (_isSnapMode || _rotationAngle == 90 || _rotationAngle == 270)
                 {
                     int rowH = contentH / 14;
                     int y = contentY;
 
                     int topRowH = Math.Max(30, rowH);
-                    int btnW = (innerW - margin * 2) / 3;
-                    if (btnCustom != null) rects[btnCustom] = new Rectangle(innerX, y, btnW, topRowH);
-                    if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX + btnW + margin, y, btnW, topRowH);
-                    if (btnMenu != null) rects[btnMenu] = new Rectangle(innerX + (btnW + margin) * 2, y, btnW, topRowH);
+
+                    // Customボタンを削除したため、HoldとMenuの2つで配置する
+                    int halfW = (innerW - margin) / 2;
+                    if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX, y, halfW, topRowH);
+                    if (btnMenu != null) rects[btnMenu] = new Rectangle(innerX + halfW + margin, y, halfW, topRowH);
+
                     y += topRowH + margin;
 
                     int shH = Math.Max(40, rowH * 2);
@@ -833,8 +828,31 @@ namespace SwitchRemoteGUI
                     int centerY = y + dpadH / 2;
                     int b = btnBaseSize;
 
-                    SetGridRects(rects, centerX, centerY, b,
-                        btnUpLeft, btnUp, btnUpRight, btnLeft, btnRight, btnDownLeft, btnDown, btnDownRight);
+                    if (_isSnapMode)
+                    {
+                        // スナップモード: 十字キーの隙間にXYABを埋め込む
+                        // 隙間配置: 左上(Y), 右上(X), 左下(B), 右下(A)
+                        SetGridRects(rects, centerX, centerY, b,
+                            btnY, btnUp, btnX,
+                            btnLeft, btnRight,
+                            btnB, btnDown, btnA);
+
+                        // 本来のABXYボタン群は画面外へ（非表示）
+                        if (btnXY != null) btnXY.Visible = false;
+                        if (btnXA != null) btnXA.Visible = false;
+                        if (btnAB != null) btnAB.Visible = false;
+                        if (btnYB != null) btnYB.Visible = false;
+
+                        // X,Y,A,BボタンはGridで指定された場所に表示されるためVisible=trueが必要
+                        Control?[] abxy = { btnX, btnY, btnA, btnB };
+                        foreach (var btn in abxy) if (btn != null) btn.Visible = true;
+                    }
+                    else
+                    {
+                        // 通常の縦持ちモード
+                        SetGridRects(rects, centerX, centerY, b,
+                            btnUpLeft, btnUp, btnUpRight, btnLeft, btnRight, btnDownLeft, btnDown, btnDownRight);
+                    }
                     y += dpadH + margin;
 
                     int sysH = Math.Max(30, rowH);
@@ -845,13 +863,26 @@ namespace SwitchRemoteGUI
                     if (btnPlus != null) rects[btnPlus] = new Rectangle(innerX + (sysW + margin) * 3, y, sysW, sysH);
                     y += sysH + margin;
 
-                    int abxyH = dpadH;
-                    centerY = y + abxyH / 2;
-                    SetGridRects(rects, centerX, centerY, b,
-                        btnXY, btnX, btnXA, btnY, btnA, btnYB, btnB, btnAB);
+                    if (!_isSnapMode)
+                    {
+                        // スナップモードでなければABXYを描画
+                        int abxyH = dpadH;
+                        centerY = y + abxyH / 2;
+                        SetGridRects(rects, centerX, centerY, b,
+                            btnXY, btnX, btnXA, btnY, btnA, btnYB, btnB, btnAB);
+
+                        // ABXYボタンを表示状態にする
+                        Control?[] abxy = { btnX, btnY, btnA, btnB };
+                        foreach (var btn in abxy) if (btn != null) btn.Visible = true;
+                    }
                 }
                 else
                 {
+                    // 横持ちモード（通常レイアウト）
+                    // ABXYボタンを表示状態にする
+                    Control?[] abxy = { btnX, btnY, btnA, btnB };
+                    foreach (var btn in abxy) if (btn != null) btn.Visible = true;
+
                     int topH = (int)(contentH * 0.10);
                     int shoulderH = (int)(contentH * 0.15);
                     int stickH = (int)(contentH * 0.12);
@@ -871,10 +902,10 @@ namespace SwitchRemoteGUI
                     int ySys = yMain + mainH + margin;
                     int yStick = ySys + systemH + margin;
 
-                    int btnW = (innerW - margin * 2) / 3;
-                    if (btnCustom != null) rects[btnCustom] = new Rectangle(innerX, yTop, btnW, topH);
-                    if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX + btnW + margin, yTop, btnW, topH);
-                    if (btnMenu != null) rects[btnMenu] = new Rectangle(innerX + (btnW + margin) * 2, yTop, btnW, topH);
+                    // Customボタン削除に伴い、HoldとMenuの2つに分割
+                    int btnW = (innerW - margin) / 2;
+                    if (btnHoldToggle != null) rects[btnHoldToggle] = new Rectangle(innerX, yTop, btnW, topH);
+                    if (btnMenu != null) rects[btnMenu] = new Rectangle(innerX + btnW + margin, yTop, btnW, topH);
 
                     int shW = (innerW - margin * 4) / 5;
                     if (btnZL != null) rects[btnZL] = new Rectangle(innerX, ySh, shW, shoulderH);
@@ -968,13 +999,18 @@ namespace SwitchRemoteGUI
             // ボタンラベルの切り替え (短縮形 vs フル名称)
             if (mBtnObs != null) mBtnObs.Text = narrow ? "O" : "OBS";
             if (mBtnHide != null) mBtnHide.Text = narrow ? "H" : "Hide OBS";
-            if (mBtnRot != null) mBtnRot.Text = narrow ? "R" : $"Rot: {_rotationAngle}°";
-            if (mBtnTrans != null) mBtnTrans.Text = narrow ? "T" : (_isSolidBlack ? "Trans" : "Black");
             if (mBtnFull != null) mBtnFull.Text = narrow ? "F" : "Full / Win";
             if (mBtnOp != null) mBtnOp.Text = narrow ? $"{(int)(_targetOpacity * 100)}%" : $"Op: {(int)(_targetOpacity * 100)}%";
 
             if (mBtnLeft != null) mBtnLeft.Text = "←";
             if (mBtnRight != null) mBtnRight.Text = "→";
+
+            // Customボタンのラベル
+            if (mBtnCustom != null)
+            {
+                if (narrow) mBtnCustom.Text = _showCustomButtons ? "C:ON" : "C:OFF";
+                else mBtnCustom.Text = _showCustomButtons ? "Custom: ON" : "Custom: OFF";
+            }
 
             if (mBtnHideController != null) mBtnHideController.Text = narrow ? "G" : "Hide GUI";
             if (mBtnKeys != null) mBtnKeys.Text = narrow ? "K" : "Keys";
@@ -984,9 +1020,9 @@ namespace SwitchRemoteGUI
             int cols = 4;
 
             Control?[] menuBtns = {
-                mBtnObs, mBtnHide, mBtnRot, mBtnTrans,
-                mBtnFull, mBtnOp, mBtnLeft, mBtnRight,
-                mBtnHideController, mBtnKeys, mBtnClose, null
+                mBtnObs, mBtnHide, mBtnFull, mBtnOp,
+                mBtnLeft, mBtnRight, mBtnCustom, mBtnKeys,
+                mBtnHideController, mBtnClose, null, null
             };
 
             // 行数を要素数に合わせて自動計算
@@ -1035,7 +1071,6 @@ namespace SwitchRemoteGUI
         protected override CreateParams CreateParams { get { CreateParams cp = base.CreateParams; cp.ExStyle |= 0x20; return cp; } }
         protected override void OnResize(EventArgs e) { base.OnResize(e); UpdateShape(); }
 
-        // ★修正: 縦長(h > w)の場合でも正しくカプセル型を描画できるように修正
         private void UpdateShape()
         {
             int w = this.Width; int h = this.Height;
@@ -1054,7 +1089,7 @@ namespace SwitchRemoteGUI
                 path.AddArc(0, 0, d, d, 90, 180);
                 path.AddArc(w - d, 0, d, d, 270, 180);
             }
-            else // 縦長 (Vertical Capsule) - ★ここが抜けていたため縦長の時に描画が壊れていた
+            else // 縦長 (Vertical Capsule)
             {
                 int d = w;
                 path.AddArc(0, 0, d, d, 180, 180); // 上半円
