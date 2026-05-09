@@ -14,7 +14,7 @@ namespace SwitchRemoteGUI
         #region 設定・定数 (Constants)
 
         // 通信設定
-        private const string PORT_NAME = "COM5";
+        private const string PORT_NAME = "COM3";
         private const int BAUD_RATE = 9600;
         private const int SEND_INTERVAL = 400;
 
@@ -217,8 +217,12 @@ namespace SwitchRemoteGUI
                     port.DiscardOutBuffer();
                     port.Write(finalCmd);
                     _lastSendTime = DateTime.Now;
+                    Debug.WriteLine($"[シリアル通信] 送信成功: {finalCmd}");
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"データ送信エラー: {ex.Message}", "エラー");
+                }
             }
         }
 
@@ -239,12 +243,44 @@ namespace SwitchRemoteGUI
             if (c == 'J') { if (_rotationAngle == 90) return 'K'; if (_rotationAngle == 180) return 'L'; if (_rotationAngle == 270) return 'I'; }
             if (c == 'K') { if (_rotationAngle == 90) return 'L'; if (_rotationAngle == 180) return 'I'; if (_rotationAngle == 270) return 'J'; }
             if (c == 'L') { if (_rotationAngle == 90) return 'I'; if (_rotationAngle == 180) return 'J'; if (_rotationAngle == 270) return 'K'; }
+            
+            // 斜め移動の回転対応
+            if (c == '6') { if (_rotationAngle == 90) return '8'; if (_rotationAngle == 180) return '9'; if (_rotationAngle == 270) return '7'; }
+            if (c == '8') { if (_rotationAngle == 90) return '9'; if (_rotationAngle == 180) return '7'; if (_rotationAngle == 270) return '6'; }
+            if (c == '9') { if (_rotationAngle == 90) return '7'; if (_rotationAngle == 180) return '6'; if (_rotationAngle == 270) return '8'; }
+            if (c == '7') { if (_rotationAngle == 90) return '6'; if (_rotationAngle == 180) return '8'; if (_rotationAngle == 270) return '9'; }
             return c;
         }
 
-        void ClearBuffer() { if (port != null && port.IsOpen) try { port.DiscardOutBuffer(); } catch { } }
+        void ClearBuffer()
+        {
+            if (port != null && port.IsOpen)
+            {
+                try { port.DiscardOutBuffer(); }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"バッファクリア時のエラー: {ex.Message}", "エラー");
+                }
+            }
+        }
 
-        void ConnectPort() { try { port = new SerialPort(PORT_NAME, BAUD_RATE); port.Open(); } catch { } }
+        void ConnectPort()
+        {
+            try
+            {
+                port = new SerialPort(PORT_NAME, BAUD_RATE);
+                port.DtrEnable = true; // Raspberry Pi Pico (TinyUSB) との通信に必須
+                port.RtsEnable = true;
+                port.Open();
+            }
+            catch (Exception ex)
+            {
+                string availablePorts = string.Join(", ", SerialPort.GetPortNames());
+                if (string.IsNullOrEmpty(availablePorts)) availablePorts = "なし (デバイスが認識されていません)";
+                
+                MessageBox.Show($"シリアルポート ({PORT_NAME}) のオープンに失敗しました。\n\n【現在PCが認識している有効なポート】\n{availablePorts}\n\nマイコン等のデバイスが接続されているか、設定のポート番号が合っているか確認してください。\n\n詳細: {ex.Message}", "通信エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
 
         #endregion
 
@@ -305,7 +341,7 @@ namespace SwitchRemoteGUI
                 case Keys.E: return "w"; // R
                 case Keys.D1: return "e"; // ZL (キー1)
                 case Keys.D3: return "r"; // ZR (キー3)
-                case Keys.D2: return "qw"; // LR (キー2: L+R同時)
+                case Keys.D2: return "5"; // LR (キー2: L+R同時)
                 case Keys.D4: return "4"; // R3 (キー4)
                 case Keys.F: return "3"; // L3 (キーF)
 
@@ -662,29 +698,29 @@ namespace SwitchRemoteGUI
             // ショルダー
             btnZL = MkGame("ZL", "e", false, Color.DarkGray);
             btnL = MkGame("L", "q", false, Color.Gray);
-            btnLR = MkGame("LR", "qw", false, Color.Orange);
+            btnLR = MkGame("LR", "5", false, Color.Orange);
             btnR = MkGame("R", "w", false, Color.Gray);
             btnZR = MkGame("ZR", "r", false, Color.DarkGray);
 
             Color diagColor = Color.FromArgb(240, 240, 240);
-            btnUpLeft = MkGame("↖", "IJ", false, diagColor);
+            btnUpLeft = MkGame("↖", "6", false, diagColor);
             btnUp = MkGame("↑", "I", false);
-            btnUpRight = MkGame("↗", "IL", false, diagColor);
+            btnUpRight = MkGame("↗", "7", false, diagColor);
             btnLeft = MkGame("←", "J", false);
             btnRight = MkGame("→", "L", false);
-            btnDownLeft = MkGame("↙", "KJ", false, diagColor);
+            btnDownLeft = MkGame("↙", "8", false, diagColor);
             btnDown = MkGame("↓", "K", false);
-            btnDownRight = MkGame("↘", "KL", false, diagColor);
+            btnDownRight = MkGame("↘", "9", false, diagColor);
 
             // ABXY
-            btnXY = MkGame("XY", "sa", false, diagColor);
+            btnXY = MkGame("XY", "t", false, diagColor);
             btnX = MkGame("X", "s", false, Color.Yellow);
-            btnXA = MkGame("XA", "sz", false, diagColor);
+            btnXA = MkGame("XA", "y", false, diagColor);
             btnY = MkGame("Y", "a", false, Color.LightGreen);
             btnA = MkGame("A", "z", false, Color.Cyan);
-            btnYB = MkGame("YB", "ax", false, diagColor);
+            btnYB = MkGame("YB", "u", false, diagColor);
             btnB = MkGame("B", "x", false, Color.Red);
-            btnAB = MkGame("AB", "zx", false, diagColor);
+            btnAB = MkGame("AB", "i", false, diagColor);
 
             // 機能
             btnMinus = MkGame("-", "m", false, Color.LightGray);
