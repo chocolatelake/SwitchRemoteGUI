@@ -2,6 +2,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO.Ports;
+using System.Net.Http;
 using System.Windows.Forms;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -59,7 +60,7 @@ namespace SwitchRemoteGUI
         #region フィールド (Fields)
 
         // 通信
-        SerialPort? port;
+        HttpClient _httpClient = new HttpClient { BaseAddress = new Uri("http://localhost:5000") };
 
         // 状態フラグ
         bool _isReady = false;
@@ -203,26 +204,32 @@ namespace SwitchRemoteGUI
 
         #region 通信処理 (Communication)
 
-        void Send(string cmd, bool force = false)
+        async void Send(string cmd, bool force = false)
         {
-            if (port != null && port.IsOpen)
+            string finalCmd = RotateCommand(cmd);
+            double msSinceLast = (DateTime.Now - _lastSendTime).TotalMilliseconds;
+
+            if (!force && msSinceLast < SEND_INTERVAL) return;
+
+            try
             {
-                string finalCmd = RotateCommand(cmd);
-                double msSinceLast = (DateTime.Now - _lastSendTime).TotalMilliseconds;
-
-                if (!force && msSinceLast < SEND_INTERVAL) return;
-
-                try
+                // バッファのクリアをサーバーに要求
+                await _httpClient.PostAsync("/api/clear", null);
+                
+                var res = await _httpClient.PostAsync($"/api/send?cmd={Uri.EscapeDataString(finalCmd)}", null);
+                if (res.IsSuccessStatusCode)
                 {
-                    port.DiscardOutBuffer();
-                    port.Write(finalCmd);
                     _lastSendTime = DateTime.Now;
-                    Debug.WriteLine($"[シリアル通信] 送信成功: {finalCmd}");
+                    Debug.WriteLine($"[API通信] 送信成功: {finalCmd}");
                 }
-                catch (Exception ex)
+                else
                 {
-                    MessageBox.Show($"データ送信エラー: {ex.Message}", "エラー");
+                    Debug.WriteLine($"[API通信] 送信失敗: {res.StatusCode}");
                 }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"データ送信エラー: {ex.Message}");
             }
         }
 
@@ -252,15 +259,15 @@ namespace SwitchRemoteGUI
             return c;
         }
 
-        void ClearBuffer()
+        async void ClearBuffer()
         {
-            if (port != null && port.IsOpen)
+            try
             {
-                try { port.DiscardOutBuffer(); }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"バッファクリア時のエラー: {ex.Message}", "エラー");
-                }
+                await _httpClient.PostAsync("/api/clear", null);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"バッファクリア時のエラー: {ex.Message}");
             }
         }
 
@@ -1173,20 +1180,6 @@ namespace SwitchRemoteGUI
                 {
                     if (RotationAngle != 0) { g.TranslateTransform(this.Width / 2, this.Height / 2); g.RotateTransform(RotationAngle); g.DrawString(this.Text, this.Font, textBrush, 0, 0, sf); g.ResetTransform(); }
                     else { g.DrawString(this.Text, this.Font, textBrush, this.ClientRectangle, sf); }
-                }
-            }
-        }
-    }
-
-    #endregion
-}String(this.Text, this.Font, textBrush, this.ClientRectangle, sf); }
-                }
-            }
-        }
-    }
-
-    #endregion
-}s.ClientRectangle, sf); }
                 }
             }
         }
