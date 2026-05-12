@@ -264,21 +264,20 @@ namespace SwitchRemoteGUI
             }
         }
 
-        void ConnectPort()
+        async void ConnectPort()
         {
             try
             {
-                port = new SerialPort(PORT_NAME, BAUD_RATE);
-                port.DtrEnable = true; // Raspberry Pi Pico (TinyUSB) との通信に必須
-                port.RtsEnable = true;
-                port.Open();
+                var res = await _httpClient.PostAsync($"/api/connect?portName={Uri.EscapeDataString(PORT_NAME)}", null);
+                if (!res.IsSuccessStatusCode)
+                {
+                    string error = await res.Content.ReadAsStringAsync();
+                    MessageBox.Show($"シリアルポート ({PORT_NAME}) のオープンに失敗しました。\n\n詳細: {error}", "通信エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
             }
             catch (Exception ex)
             {
-                string availablePorts = string.Join(", ", SerialPort.GetPortNames());
-                if (string.IsNullOrEmpty(availablePorts)) availablePorts = "なし (デバイスが認識されていません)";
-                
-                MessageBox.Show($"シリアルポート ({PORT_NAME}) のオープンに失敗しました。\n\n【現在PCが認識している有効なポート】\n{availablePorts}\n\nマイコン等のデバイスが接続されているか、設定のポート番号が合っているか確認してください。\n\n詳細: {ex.Message}", "通信エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"サーバーへの接続に失敗しました。SwitchRemoteServer が起動しているか確認してください。\n\n詳細: {ex.Message}", "通信エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -602,7 +601,7 @@ namespace SwitchRemoteGUI
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
-            if (port != null && port.IsOpen) port.Close();
+            try { _httpClient.PostAsync("/api/disconnect", null); } catch { }
             base.OnFormClosed(e);
         }
 
@@ -1174,6 +1173,20 @@ namespace SwitchRemoteGUI
                 {
                     if (RotationAngle != 0) { g.TranslateTransform(this.Width / 2, this.Height / 2); g.RotateTransform(RotationAngle); g.DrawString(this.Text, this.Font, textBrush, 0, 0, sf); g.ResetTransform(); }
                     else { g.DrawString(this.Text, this.Font, textBrush, this.ClientRectangle, sf); }
+                }
+            }
+        }
+    }
+
+    #endregion
+}String(this.Text, this.Font, textBrush, this.ClientRectangle, sf); }
+                }
+            }
+        }
+    }
+
+    #endregion
+}s.ClientRectangle, sf); }
                 }
             }
         }
